@@ -37,6 +37,12 @@ func Middleware() fiber.Handler {
 
 		rid := c.Get(RequestIDHeader)
 		if rid == "" {
+			// Reutiliza el id del middleware requestid de Fiber si ya corrió.
+			if v, ok := c.Locals("requestid").(string); ok && v != "" {
+				rid = v
+			}
+		}
+		if rid == "" {
 			rid = ulid.Make().String()
 		}
 		ctx = keeper.ContextWithRequestID(ctx, rid)
