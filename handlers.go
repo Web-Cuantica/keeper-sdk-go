@@ -28,6 +28,32 @@ func (h *leveledHandler) WithGroup(name string) slog.Handler {
 	return &leveledHandler{next: h.next.WithGroup(name), level: h.level}
 }
 
+// contextHandler inyecta en cada log el request_id presente en el contexto
+// (correlación entre logs y servicios), al estilo del mixin de @dy/logging.
+type contextHandler struct {
+	next slog.Handler
+}
+
+func (h contextHandler) Enabled(ctx context.Context, l slog.Level) bool {
+	return h.next.Enabled(ctx, l)
+}
+
+func (h contextHandler) Handle(ctx context.Context, r slog.Record) error {
+	if rid := RequestID(ctx); rid != "" {
+		r = r.Clone()
+		r.AddAttrs(slog.String("request_id", rid))
+	}
+	return h.next.Handle(ctx, r)
+}
+
+func (h contextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return contextHandler{next: h.next.WithAttrs(attrs)}
+}
+
+func (h contextHandler) WithGroup(name string) slog.Handler {
+	return contextHandler{next: h.next.WithGroup(name)}
+}
+
 // redactHandler censura los atributos cuya clave sea sensible (PII/secrets) antes
 // de pasarlos al handler subyacente (el bridge a OTel logs).
 type redactHandler struct {

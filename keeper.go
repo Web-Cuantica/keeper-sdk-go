@@ -97,9 +97,10 @@ func Start(ctx context.Context, opts ...Option) (func(context.Context) error, er
 	)
 	otellog.SetLoggerProvider(lp)
 
-	// slog -> OTel logs, con redacción y nivel mínimo.
+	// slog -> OTel logs, con request_id de contexto, redacción y nivel mínimo.
 	var h slog.Handler = otelslog.NewHandler(scopeName, otelslog.WithLoggerProvider(lp))
 	h = redactHandler{next: h, keys: cfg.redactKeys}
+	h = contextHandler{next: h}
 	h = &leveledHandler{next: h, level: cfg.level}
 
 	mu.Lock()
