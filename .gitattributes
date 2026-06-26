@@ -1,0 +1,4 @@
+# Normaliza finales de línea a LF en el repo (evita warnings CRLF en Windows).
+* text=auto eol=lf
+*.go text eol=lf
+*.sh text eol=lf
