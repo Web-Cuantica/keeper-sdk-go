@@ -8,6 +8,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"crypto/rand"
+	"encoding/hex"
 	"log/slog"
 	"net/url"
 	"sync"
@@ -41,13 +43,21 @@ var (
 func Start(ctx context.Context, opts ...Option) (func(context.Context) error, error) {
 	cfg := resolveConfig(opts...)
 
-	res, err := resource.New(ctx, resource.WithAttributes(
-		attribute.String("service.name", cfg.service),
-		attribute.String("service.version", cfg.version),
-		attribute.String("deployment.environment", cfg.env),
-	))
+	res, err := resource.New(ctx,
+		resource.WithHost(),    // host.name (columna HOST en la plataforma)
+		resource.WithProcess(), // process.pid, runtime, etc.
+		resource.WithAttributes(
+			attribute.String("service.name", cfg.service),
+			attribute.String("service.version", cfg.version),
+			attribute.String("deployment.environment", cfg.env),
+			attribute.String("service.instance.id", instanceID()),
+		),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("keeper: resource: %w", err)
+		// Conflictos de schema entre detectores no son fatales: se usa lo detectado.
+		if res == nil {
+			return nil, fmt.Errorf("keeper: resource: %w", err)
+		}
 	}
 
 	host, insecure := endpointParts(cfg.endpoint)
@@ -148,4 +158,13 @@ func endpointParts(raw string) (host string, insecure bool) {
 		return raw, true
 	}
 	return u.Host, u.Scheme != "https"
+}
+
+// instanceID genera un id único por proceso para service.instance.id.
+func instanceID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "unknown"
+	}
+	return hex.EncodeToString(b)
 }
