@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"sync"
 
-	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -97,8 +96,9 @@ func Start(ctx context.Context, opts ...Option) (func(context.Context) error, er
 	)
 	otellog.SetLoggerProvider(lp)
 
-	// slog -> OTel logs, con request_id de contexto, redacción y nivel mínimo.
-	var h slog.Handler = otelslog.NewHandler(scopeName, otelslog.WithLoggerProvider(lp))
+	// slog -> OTel logs (handler propio: fija SeverityText), con request_id de
+	// contexto, redacción y nivel mínimo.
+	var h slog.Handler = newOtelHandler(lp.Logger(scopeName))
 	h = redactHandler{next: h, keys: cfg.redactKeys}
 	h = contextHandler{next: h}
 	h = &leveledHandler{next: h, level: cfg.level}

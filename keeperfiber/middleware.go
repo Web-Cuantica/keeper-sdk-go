@@ -48,11 +48,7 @@ func Middleware() fiber.Handler {
 		ctx = keeper.ContextWithRequestID(ctx, rid)
 		c.Set(RequestIDHeader, rid)
 
-		route := c.Route().Path
-		if route == "" {
-			route = c.Path()
-		}
-		ctx, span := tracer.Start(ctx, c.Method()+" "+route,
+		ctx, span := tracer.Start(ctx, c.Method()+" "+c.Path(),
 			trace.WithSpanKind(trace.SpanKindServer))
 		c.SetUserContext(ctx)
 		start := time.Now()
@@ -78,6 +74,10 @@ func Middleware() fiber.Handler {
 			attribute.String("url.path", c.Path()),
 			attribute.Int("http.response.status_code", status),
 		)
+		// Plantilla de ruta (ya resuelta tras c.Next()) como http.route.
+		if route := c.Route().Path; route != "" && route != "/" {
+			span.SetAttributes(attribute.String("http.route", route))
+		}
 		if status >= 500 {
 			span.SetStatus(codes.Error, "")
 		}
