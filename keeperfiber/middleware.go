@@ -94,6 +94,10 @@ func Middleware() fiber.Handler {
 	}
 }
 
+// levelFor mapea el status HTTP a nivel de log. Los 2xx/3xx van a Debug a
+// propósito: el log de acceso exitoso es ruido (la traza ya cubre cada request),
+// así que en producción (nivel info) no se exporta y la vista de Logs queda para
+// eventos de negocio y errores. Los 4xx/5xx sí se registran (warn/error).
 func levelFor(status int) slog.Level {
 	switch {
 	case status >= 500:
@@ -101,7 +105,7 @@ func levelFor(status int) slog.Level {
 	case status >= 400:
 		return slog.LevelWarn
 	default:
-		return slog.LevelInfo
+		return slog.LevelDebug
 	}
 }
 
