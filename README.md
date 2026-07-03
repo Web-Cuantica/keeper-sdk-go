@@ -69,8 +69,25 @@ Produce un log correlacionado con la traza activa, con `service.name`/`deploymen
 - `keeper.Logger() *slog.Logger` — logger estructurado; úsalo con el `ctx` del request para correlacionar.
 - `keeper.LogError(ctx, msg, err, attrs...)` — loguea error con `exception.*` y lo registra en el span.
 
-> Middleware para **Fiber** (`request_id`, propagación de trace, log HTTP estándar): subpaquete
-> `keeperfiber` (en construcción; objetivo de validación: `kinetiq-api`).
+## Middleware Fiber (`keeperfiber`)
+
+`keeperfiber.Middleware()` — **en producción**, validado en `kinetiq-api`. Por cada request:
+
+- **`request_id`** (reusa el header entrante o genera un ULID) en contexto y respuesta;
+- **span de servidor** propagando el trace context entrante (W3C `traceparent`);
+- **log HTTP** con semántica OTel — 2xx/3xx a `debug` (la traza ya cubre el acceso), 4xx `warn`, 5xx `error`;
+- **origen del cliente**: IP + navegador/SO/tipo de dispositivo (parseo del User-Agent con
+  `mileusna/useragent`), inyectados en **todos** los logs del request
+  (`client.address` · `client.browser` · `client.os` · `client.device.type` · `user_agent.original`);
+- **excepciones**: `recover` de panics y `span.RecordError` en **toda respuesta 5xx** (usa el status
+  efectivo aunque el handler devuelva el error) → pueblan la vista **Excepciones** de Keeper.
+
+```go
+app := fiber.New()
+app.Use(keeperfiber.Middleware())
+```
+
+> Nota: no se emite `process.*` como resource (ruido para logs de negocio); sí `service.*` y `host.name`.
 
 ## Verificación
 
