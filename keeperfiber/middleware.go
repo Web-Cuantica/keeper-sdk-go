@@ -4,6 +4,7 @@
 package keeperfiber
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -56,9 +57,11 @@ func Middleware() fiber.Handler {
 		start := time.Now()
 
 		var nextErr error
+		panicked := false
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
+					panicked = true
 					err := fmt.Errorf("panic: %v", r)
 					span.RecordError(err)
 					span.SetStatus(codes.Error, err.Error())
@@ -70,7 +73,19 @@ func Middleware() fiber.Handler {
 			nextErr = c.Next()
 		}()
 
+		// Status efectivo: si el handler DEVOLVIÓ un error, Fiber aún no lo tradujo
+		// a la respuesta (su error handler corre después del middleware), así que lo
+		// inferimos del error para atribuir bien el span y contar la excepción.
 		status := c.Response().StatusCode()
+		if nextErr != nil {
+			var fe *fiber.Error
+			if errors.As(nextErr, &fe) {
+				status = fe.Code
+			} else {
+				status = fiber.StatusInternalServerError // error genérico -> 500 en Fiber
+			}
+		}
+
 		span.SetAttributes(
 			attribute.String("http.request.method", c.Method()),
 			attribute.String("url.path", c.Path()),
@@ -80,8 +95,20 @@ func Middleware() fiber.Handler {
 		if route := c.Route().Path; route != "" && route != "/" {
 			span.SetAttributes(attribute.String("http.route", route))
 		}
-		if status >= 500 {
-			span.SetStatus(codes.Error, "")
+		// Excepciones: todo 5xx se registra como excepción del span (aparece en la
+		// vista Excepciones de Keeper), salvo que el recover de un panic ya lo haya
+		// hecho. Se usa el error devuelto por el handler si lo hay; si no, se
+		// sintetiza uno con el status. Los <500 no generan excepción (evita ruido).
+		switch {
+		case panicked:
+			// La excepción ya se registró en el recover; no duplicar.
+		case status >= 500:
+			err := nextErr
+			if err == nil {
+				err = fmt.Errorf("respuesta HTTP %d", status)
+			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 		}
 		span.End()
 
