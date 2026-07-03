@@ -44,8 +44,10 @@ func Start(ctx context.Context, opts ...Option) (func(context.Context) error, er
 	cfg := resolveConfig(opts...)
 
 	res, err := resource.New(ctx,
-		resource.WithHost(),    // host.name (columna HOST en la plataforma)
-		resource.WithProcess(), // process.pid, runtime, etc.
+		resource.WithHost(), // host.name (columna HOST en la plataforma)
+		// Nota: NO usamos resource.WithProcess(): sus atributos (process.pid,
+		// process.executable.*, process.owner, process.runtime.*, command_args)
+		// son ruido para logs de negocio. Se dejan fuera a propósito.
 		resource.WithAttributes(
 			attribute.String("service.name", cfg.service),
 			attribute.String("service.version", cfg.version),

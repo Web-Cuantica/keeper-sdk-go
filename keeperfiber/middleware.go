@@ -46,6 +46,8 @@ func Middleware() fiber.Handler {
 			rid = ulid.Make().String()
 		}
 		ctx = keeper.ContextWithRequestID(ctx, rid)
+		// Origen del request (IP + navegador/SO/dispositivo) para todos los logs.
+		ctx = keeper.ContextWithClient(ctx, keeper.ParseClient(c.IP(), c.Get("User-Agent")))
 		c.Set(RequestIDHeader, rid)
 
 		ctx, span := tracer.Start(ctx, c.Method()+" "+c.Path(),
@@ -83,11 +85,12 @@ func Middleware() fiber.Handler {
 		}
 		span.End()
 
+		// client.address/browser/os/device los inyecta el contextHandler del SDK
+		// desde el contexto (ver ContextWithClient arriba), no se repiten aquí.
 		keeper.Logger().LogAttrs(ctx, levelFor(status), "request completed",
 			slog.String("http.request.method", c.Method()),
 			slog.String("url.path", c.Path()),
 			slog.Int("http.response.status_code", status),
-			slog.String("client.address", c.IP()),
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 		)
 		return nextErr

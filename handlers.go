@@ -28,8 +28,9 @@ func (h *leveledHandler) WithGroup(name string) slog.Handler {
 	return &leveledHandler{next: h.next.WithGroup(name), level: h.level}
 }
 
-// contextHandler inyecta en cada log el request_id presente en el contexto
-// (correlación entre logs y servicios), al estilo del mixin de @dy/logging.
+// contextHandler inyecta en cada log el request_id y el origen del request
+// (client.address/browser/os/device) presentes en el contexto — correlación y
+// contexto de "desde dónde", al estilo del mixin de @dy/logging.
 type contextHandler struct {
 	next slog.Handler
 }
@@ -39,9 +40,30 @@ func (h contextHandler) Enabled(ctx context.Context, l slog.Level) bool {
 }
 
 func (h contextHandler) Handle(ctx context.Context, r slog.Record) error {
+	var extra []slog.Attr
 	if rid := RequestID(ctx); rid != "" {
+		extra = append(extra, slog.String("request_id", rid))
+	}
+	if c, ok := ClientFromContext(ctx); ok {
+		if c.Address != "" {
+			extra = append(extra, slog.String("client.address", c.Address))
+		}
+		if c.Browser != "" {
+			extra = append(extra, slog.String("client.browser", c.Browser))
+		}
+		if c.OS != "" {
+			extra = append(extra, slog.String("client.os", c.OS))
+		}
+		if c.DeviceType != "" {
+			extra = append(extra, slog.String("client.device.type", c.DeviceType))
+		}
+		if c.UserAgent != "" {
+			extra = append(extra, slog.String("user_agent.original", c.UserAgent))
+		}
+	}
+	if len(extra) > 0 {
 		r = r.Clone()
-		r.AddAttrs(slog.String("request_id", rid))
+		r.AddAttrs(extra...)
 	}
 	return h.next.Handle(ctx, r)
 }
