@@ -140,14 +140,24 @@ func Logger() *slog.Logger {
 // LogError registra el error en el span activo (RecordError + status Error) y loguea
 // a nivel error con los atributos exception.type/exception.message más los que pases.
 func LogError(ctx context.Context, msg string, err error, attrs ...slog.Attr) {
+	// Defensa contra err nil: no debe tumbar al proceso. Se registra el mensaje igual,
+	// con exception.type "<nil>" y mensaje vacío. (RecordError con nil ya es no-op en OTel.)
+	errType := "<nil>"
+	errMsg := ""
+	if err != nil {
+		errType = fmt.Sprintf("%T", err)
+		errMsg = err.Error()
+	}
 	if span := trace.SpanFromContext(ctx); span.IsRecording() {
 		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
+		if err != nil {
+			span.SetStatus(codes.Error, errMsg)
+		}
 	}
 	all := make([]slog.Attr, 0, len(attrs)+2)
 	all = append(all,
-		slog.String("exception.type", fmt.Sprintf("%T", err)),
-		slog.String("exception.message", err.Error()),
+		slog.String("exception.type", errType),
+		slog.String("exception.message", errMsg),
 	)
 	all = append(all, attrs...)
 	Logger().LogAttrs(ctx, slog.LevelError, msg, all...)
