@@ -1,6 +1,7 @@
 package keeperfiber
 
 import (
+	"log/slog"
 	"net/http/httptest"
 	"testing"
 
@@ -41,6 +42,29 @@ func TestMiddlewareReutilizaRequestIDEntrante(t *testing.T) {
 	}
 	if got := resp.Header.Get(RequestIDHeader); got != "rid-fijo-123" {
 		t.Errorf("request_id no reutilizado: %q", got)
+	}
+}
+
+func TestLevelFor(t *testing.T) {
+	casos := []struct {
+		method string
+		status int
+		want   slog.Level
+	}{
+		{"GET", 200, slog.LevelDebug},   // lectura exitosa → debug (no ruido)
+		{"HEAD", 304, slog.LevelDebug},
+		{"POST", 201, slog.LevelInfo},   // escritura exitosa → info (evento de negocio)
+		{"PUT", 200, slog.LevelInfo},
+		{"PATCH", 200, slog.LevelInfo},
+		{"DELETE", 204, slog.LevelInfo},
+		{"POST", 400, slog.LevelWarn},   // 4xx → warn
+		{"POST", 500, slog.LevelError},  // 5xx → error
+		{"GET", 500, slog.LevelError},
+	}
+	for _, c := range casos {
+		if got := levelFor(c.method, c.status); got != c.want {
+			t.Errorf("levelFor(%q, %d) = %v, want %v", c.method, c.status, got, c.want)
+		}
 	}
 }
 

@@ -114,7 +114,7 @@ func Middleware() fiber.Handler {
 
 		// client.address/browser/os/device los inyecta el contextHandler del SDK
 		// desde el contexto (ver ContextWithClient arriba), no se repiten aquí.
-		keeper.Logger().LogAttrs(ctx, levelFor(status), "request completed",
+		keeper.Logger().LogAttrs(ctx, levelFor(c.Method(), status), "request completed",
 			slog.String("http.request.method", c.Method()),
 			slog.String("url.path", c.Path()),
 			slog.Int("http.response.status_code", status),
@@ -124,19 +124,32 @@ func Middleware() fiber.Handler {
 	}
 }
 
-// levelFor mapea el status HTTP a nivel de log. Los 2xx/3xx van a Debug a
-// propósito: el log de acceso exitoso es ruido (la traza ya cubre cada request),
-// así que en producción (nivel info) no se exporta y la vista de Logs queda para
-// eventos de negocio y errores. Los 4xx/5xx sí se registran (warn/error).
-func levelFor(status int) slog.Level {
+// levelFor mapea método + status HTTP a nivel de log:
+//   - 5xx → Error, 4xx → Warn (siempre se registran).
+//   - Escritura exitosa (POST/PUT/PATCH/DELETE, <400) → Info: es un evento de
+//     negocio que muta datos y se quiere ver en la vista de Logs.
+//   - Lectura exitosa (GET/HEAD, <400) → Debug: la traza ya cubre el acceso, así
+//     que en producción (nivel info) no se exporta y no genera ruido.
+func levelFor(method string, status int) slog.Level {
 	switch {
 	case status >= 500:
 		return slog.LevelError
 	case status >= 400:
 		return slog.LevelWarn
+	case isMutation(method):
+		return slog.LevelInfo
 	default:
 		return slog.LevelDebug
 	}
+}
+
+// isMutation indica si el método HTTP modifica estado.
+func isMutation(method string) bool {
+	switch method {
+	case "POST", "PUT", "PATCH", "DELETE":
+		return true
+	}
+	return false
 }
 
 // fiberCarrier adapta los headers del request de Fiber a TextMapCarrier de OTel
