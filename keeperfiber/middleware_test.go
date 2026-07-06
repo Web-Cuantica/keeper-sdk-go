@@ -47,23 +47,21 @@ func TestMiddlewareReutilizaRequestIDEntrante(t *testing.T) {
 
 func TestLevelFor(t *testing.T) {
 	casos := []struct {
-		method string
 		status int
 		want   slog.Level
 	}{
-		{"GET", 200, slog.LevelDebug},   // lectura exitosa → debug (no ruido)
-		{"HEAD", 304, slog.LevelDebug},
-		{"POST", 201, slog.LevelInfo},   // escritura exitosa → info (evento de negocio)
-		{"PUT", 200, slog.LevelInfo},
-		{"PATCH", 200, slog.LevelInfo},
-		{"DELETE", 204, slog.LevelInfo},
-		{"POST", 400, slog.LevelWarn},   // 4xx → warn
-		{"POST", 500, slog.LevelError},  // 5xx → error
-		{"GET", 500, slog.LevelError},
+		{200, slog.LevelDebug}, // éxito → debug (no se exporta en prod; el log de negocio cubre el evento)
+		{201, slog.LevelDebug},
+		{204, slog.LevelDebug},
+		{304, slog.LevelDebug},
+		{400, slog.LevelWarn}, // 4xx → warn
+		{404, slog.LevelWarn},
+		{500, slog.LevelError}, // 5xx → error
+		{503, slog.LevelError},
 	}
 	for _, c := range casos {
-		if got := levelFor(c.method, c.status); got != c.want {
-			t.Errorf("levelFor(%q, %d) = %v, want %v", c.method, c.status, got, c.want)
+		if got := levelFor(c.status); got != c.want {
+			t.Errorf("levelFor(%d) = %v, want %v", c.status, got, c.want)
 		}
 	}
 }
