@@ -54,8 +54,11 @@ func TestLevelFor(t *testing.T) {
 		{201, slog.LevelDebug},
 		{204, slog.LevelDebug},
 		{304, slog.LevelDebug},
-		{400, slog.LevelWarn}, // 4xx → warn
-		{404, slog.LevelWarn},
+		{400, slog.LevelWarn}, // 4xx (salvo 404) → warn
+		{401, slog.LevelWarn},
+		{403, slog.LevelWarn},
+		{409, slog.LevelWarn},
+		{404, slog.LevelDebug}, // 404 → debug: cliente/escáneres de internet, no se exporta
 		{500, slog.LevelError}, // 5xx → error
 		{503, slog.LevelError},
 	}

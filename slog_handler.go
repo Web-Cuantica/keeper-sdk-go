@@ -32,7 +32,7 @@ func (h *otelHandler) Handle(ctx context.Context, r slog.Record) error {
 	} else {
 		rec.SetTimestamp(r.Time)
 	}
-	rec.SetBody(otellog.StringValue(r.Message))
+	rec.SetBody(otellog.StringValue(SafeUTF8(r.Message)))
 	sev, text := mapSeverity(r.Level)
 	rec.SetSeverity(sev)
 	rec.SetSeverityText(text)
@@ -85,12 +85,14 @@ func attrToKeyValue(a slog.Attr) otellog.KeyValue {
 	case slog.KindFloat64:
 		return otellog.Float64(a.Key, a.Value.Float64())
 	case slog.KindString:
-		return otellog.String(a.Key, a.Value.String())
+		// Sanitiza UTF-8: un valor con bytes inválidos (p. ej. User-Agent o ruta de
+		// un bot) haría que el exportador OTLP rechace el lote completo de logs.
+		return otellog.String(a.Key, SafeUTF8(a.Value.String()))
 	case slog.KindDuration:
 		return otellog.String(a.Key, a.Value.Duration().String())
 	case slog.KindTime:
 		return otellog.String(a.Key, a.Value.Time().Format(time.RFC3339Nano))
 	default:
-		return otellog.String(a.Key, a.Value.String())
+		return otellog.String(a.Key, SafeUTF8(a.Value.String()))
 	}
 }

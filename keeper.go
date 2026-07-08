@@ -6,10 +6,10 @@ package keeper
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"sync"
@@ -119,6 +119,18 @@ func Start(ctx context.Context, opts ...Option) (func(context.Context) error, er
 	logger = slog.New(h)
 	slog.SetDefault(logger)
 	mu.Unlock()
+
+	// Errores internos del pipeline de OTel (p. ej. un lote de export rechazado por el
+	// colector) se registran como ERROR con el logger de Keeper. Por defecto OTel los
+	// manda a stderr con el log estándar y se veían como INFO ("traces export: …").
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		if err == nil {
+			return
+		}
+		Logger().LogAttrs(context.Background(), slog.LevelError, "error interno de OpenTelemetry",
+			slog.String("exception.message", err.Error()),
+		)
+	}))
 
 	shutdown := func(ctx context.Context) error {
 		return errors.Join(tp.Shutdown(ctx), mp.Shutdown(ctx), lp.Shutdown(ctx))

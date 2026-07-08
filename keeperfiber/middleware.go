@@ -51,7 +51,12 @@ func Middleware() fiber.Handler {
 		ctx = keeper.ContextWithClient(ctx, keeper.ParseClient(c.IP(), c.Get("User-Agent")))
 		c.Set(RequestIDHeader, rid)
 
-		ctx, span := tracer.Start(ctx, c.Method()+" "+c.Path(),
+		// Ruta saneada a UTF-8 válido: se reutiliza como nombre de span, atributo
+		// url.path y campo del log. Un request con bytes no-UTF8 (sondeos de bots a la
+		// IP pública) haría que el exportador OTLP rechace el lote COMPLETO de spans.
+		safePath := keeper.SafeUTF8(c.Path())
+
+		ctx, span := tracer.Start(ctx, c.Method()+" "+safePath,
 			trace.WithSpanKind(trace.SpanKindServer))
 		c.SetUserContext(ctx)
 		start := time.Now()
@@ -88,12 +93,12 @@ func Middleware() fiber.Handler {
 
 		span.SetAttributes(
 			attribute.String("http.request.method", c.Method()),
-			attribute.String("url.path", c.Path()),
+			attribute.String("url.path", safePath),
 			attribute.Int("http.response.status_code", status),
 		)
 		// Plantilla de ruta (ya resuelta tras c.Next()) como http.route.
 		if route := c.Route().Path; route != "" && route != "/" {
-			span.SetAttributes(attribute.String("http.route", route))
+			span.SetAttributes(attribute.String("http.route", keeper.SafeUTF8(route)))
 		}
 		// Excepciones: todo 5xx se registra como excepción del span (aparece en la
 		// vista Excepciones de Keeper), salvo que el recover de un panic ya lo haya
@@ -116,7 +121,7 @@ func Middleware() fiber.Handler {
 		// desde el contexto (ver ContextWithClient arriba), no se repiten aquí.
 		keeper.Logger().LogAttrs(ctx, levelFor(status), "request completed",
 			slog.String("http.request.method", c.Method()),
-			slog.String("url.path", c.Path()),
+			slog.String("url.path", safePath),
 			slog.Int("http.response.status_code", status),
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 		)
@@ -125,14 +130,20 @@ func Middleware() fiber.Handler {
 }
 
 // levelFor mapea el status HTTP al nivel del log "request completed":
-//   - 5xx → Error, 4xx → Warn: son la señal de fallo a nivel HTTP y siempre se registran.
-//   - <400 (éxito) → Debug: en producción (nivel info) NO se exporta. El evento de
-//     negocio ya lo cubren los logs semánticos de cada handler ("Cliente creado", etc.)
-//     y la traza; así se evita el ruido de un "request completed" duplicado por request.
+//   - 5xx → Error: fallo del servidor, siempre se registra.
+//   - 404 → Debug: "no encontrado" es casi siempre cliente o escáneres de internet
+//     sondeando la IP pública (/.env, /.git/config, …); no es una señal accionable del
+//     servidor. En producción (nivel info) NO se exporta, evitando el ruido de los bots.
+//   - resto de 4xx (400/401/403/409/422…) → Warn: fallo a nivel HTTP que sí interesa ver.
+//   - <400 (éxito) → Debug: en producción NO se exporta. El evento de negocio ya lo
+//     cubren los logs semánticos de cada handler ("Cliente creado", etc.) y la traza;
+//     así se evita el ruido de un "request completed" duplicado por request.
 func levelFor(status int) slog.Level {
 	switch {
 	case status >= 500:
 		return slog.LevelError
+	case status == 404:
+		return slog.LevelDebug
 	case status >= 400:
 		return slog.LevelWarn
 	default:
