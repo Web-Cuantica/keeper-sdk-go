@@ -37,6 +37,43 @@ func TestResolveConfigDefaults(t *testing.T) {
 	}
 }
 
+func TestDeployResourceAttrs(t *testing.T) {
+	cfg := config{service: "svc", version: "1.0.0", env: "production"}
+	attrs := deployResourceAttrs(cfg)
+	seen := map[string]string{}
+	for _, a := range attrs {
+		seen[string(a.Key)] = a.Value.AsString()
+	}
+	if seen["service.name"] != "svc" || seen["deployment.environment"] != "production" {
+		t.Errorf("atributos base incompletos: %v", seen)
+	}
+	if _, ok := seen["build_id"]; ok {
+		t.Error("build_id no debe estar sin configurar")
+	}
+
+	cfg.buildID = "b-1"
+	cfg.commitHash = "abc123"
+	seen = map[string]string{}
+	for _, a := range deployResourceAttrs(cfg) {
+		seen[string(a.Key)] = a.Value.AsString()
+	}
+	if seen["build_id"] != "b-1" || seen["commit_hash"] != "abc123" {
+		t.Errorf("build_id/commit_hash no emitidos: %v", seen)
+	}
+}
+
+func TestResolveConfigBuildCommitDesdeEntorno(t *testing.T) {
+	t.Setenv("KEEPER_BUILD_ID", "build-9")
+	t.Setenv("GIT_COMMIT", "deadbeef")
+	cfg := resolveConfig()
+	if cfg.buildID != "build-9" {
+		t.Errorf("buildID desde entorno = %q", cfg.buildID)
+	}
+	if cfg.commitHash != "deadbeef" {
+		t.Errorf("commitHash desde entorno = %q", cfg.commitHash)
+	}
+}
+
 func TestOptionsPrecedenceSobreEntorno(t *testing.T) {
 	t.Setenv("KEEPER_SERVICE_NAME", "del-entorno")
 	cfg := resolveConfig(WithService("de-la-opcion"), WithEnv("dev"))

@@ -3,7 +3,6 @@ package keeper
 import (
 	"context"
 	"log/slog"
-	"strings"
 )
 
 // leveledHandler aplica un nivel mínimo sobre el handler subyacente.
@@ -76,11 +75,13 @@ func (h contextHandler) WithGroup(name string) slog.Handler {
 	return contextHandler{next: h.next.WithGroup(name)}
 }
 
-// redactHandler censura los atributos cuya clave sea sensible (PII/secrets) antes
-// de pasarlos al handler subyacente (el bridge a OTel logs).
+// redactHandler censura (o hashea) los atributos cuya clave sea sensible
+// (PII/secrets) antes de pasarlos al handler subyacente (bridge a OTel logs).
 type redactHandler struct {
-	next slog.Handler
-	keys map[string]struct{}
+	next     slog.Handler
+	keys     map[string]struct{} // secretos + PII: siempre se intervienen
+	hashKeys map[string]struct{} // subconjunto PII → hash si hay pepper (§3.4)
+	pepper   string
 }
 
 func (h redactHandler) Enabled(ctx context.Context, l slog.Level) bool {
@@ -101,16 +102,31 @@ func (h redactHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	for i, a := range attrs {
 		out[i] = h.redact(a)
 	}
-	return redactHandler{next: h.next.WithAttrs(out), keys: h.keys}
+	return redactHandler{next: h.next.WithAttrs(out), keys: h.keys, hashKeys: h.hashKeys, pepper: h.pepper}
 }
 
 func (h redactHandler) WithGroup(name string) slog.Handler {
-	return redactHandler{next: h.next.WithGroup(name), keys: h.keys}
+	return redactHandler{next: h.next.WithGroup(name), keys: h.keys, hashKeys: h.hashKeys, pepper: h.pepper}
 }
 
 func (h redactHandler) redact(a slog.Attr) slog.Attr {
-	if _, ok := h.keys[strings.ToLower(a.Key)]; ok {
+	if matchRedact(a.Key, h.keys) {
+		// Identificadores hasheables: correlación sin exponer el dato, si hay pepper.
+		if h.pepper != "" && matchRedact(a.Key, h.hashKeys) {
+			if hashed := hashIDWithPepper(h.pepper, a.Value.String()); hashed != "" {
+				return slog.String(a.Key, hashed)
+			}
+		}
 		return slog.String(a.Key, redactCensor)
+	}
+	// Grupos slog anidados: censura/hashea recursivamente (§3.4 MUST).
+	if a.Value.Kind() == slog.KindGroup {
+		group := a.Value.Group()
+		out := make([]slog.Attr, len(group))
+		for i, ga := range group {
+			out[i] = h.redact(ga)
+		}
+		return slog.Attr{Key: a.Key, Value: slog.GroupValue(out...)}
 	}
 	return a
 }

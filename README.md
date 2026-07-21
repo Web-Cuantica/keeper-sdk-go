@@ -62,12 +62,19 @@ Produce un log correlacionado con la traza activa, con `service.name`/`deploymen
 | `WithEndpoint` | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` |
 | `WithLevel` | `KEEPER_LOG_LEVEL` | dev→debug, prod→info |
 | `WithRedactKeys` | — | `authorization,password,token,secret,vin,email,...` |
+| `WithHashPepper` | `KEEPER_HASH_PEPPER` | vacío (PII → `***`; con pepper → hash `h1:…`) |
+| `WithHashKeys` | — | `email,curp,rfc,vin,ssn` (solo identificadores; nunca secretos) |
+
+Con `KEEPER_HASH_PEPPER` (el **mismo** en todos los servicios), los identificadores
+sensibles se emiten como HMAC-SHA256 one-way (`h1:<hex>`) para correlacionar sin
+exponer el dato. Los secretos (`password`/`token`/…) siguen censurándose con `***`.
 
 ## API
 
 - `keeper.Start(ctx, opts...) (shutdown, error)` — inicializa trazas+métricas+logs (OTLP) y el logger.
 - `keeper.Logger() *slog.Logger` — logger estructurado; úsalo con el `ctx` del request para correlacionar.
 - `keeper.LogError(ctx, msg, err, attrs...)` — loguea error con `exception.*` y lo registra en el span.
+- `keeper.HashID(value)` — hash one-way manual (requiere pepper); normalmente lo hace el redact automático.
 
 ## Middleware Fiber (`keeperfiber`)
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -24,16 +25,38 @@ const RequestIDHeader = "X-Request-ID"
 
 const scopeName = "github.com/Web-Cuantica/keeper-sdk-go/keeperfiber"
 
+// defaultIgnorePaths: tráfico de plomería que no debe generar span/log (§7 centinela
+// "nunca registrar" — ruido/costo sin valor de negocio).
+var defaultIgnorePaths = []string{"/health", "/healthz", "/live", "/ready", "/ping", "/metrics"}
+
+// MiddlewareConfig configura el middleware Fiber.
+type MiddlewareConfig struct {
+	// IgnorePaths son rutas (sufijo o exactas) que NO generan telemetría.
+	// nil ⇒ defaultIgnorePaths; slice vacío ⇒ no se ignora ninguna.
+	IgnorePaths []string
+}
+
 // Middleware instala observabilidad por request en una app Fiber:
 //   - request_id (lee el header entrante o genera un ULID) en contexto y respuesta;
 //   - span de servidor propagando el trace context entrante (W3C);
 //   - log "request completed" con semántica HTTP de OTel;
 //   - recover de panics (500 + log de error).
-func Middleware() fiber.Handler {
+//
+// Acepta opcionalmente MiddlewareConfig (p. ej. Middleware(MiddlewareConfig{IgnorePaths: ...})).
+func Middleware(cfg ...MiddlewareConfig) fiber.Handler {
+	ignore := defaultIgnorePaths
+	if len(cfg) > 0 && cfg[0].IgnorePaths != nil {
+		ignore = cfg[0].IgnorePaths
+	}
 	tracer := otel.Tracer(scopeName)
 	prop := otel.GetTextMapPropagator()
 
 	return func(c *fiber.Ctx) error {
+		safePath := keeper.SafeUTF8(c.Path())
+		if shouldIgnorePath(safePath, ignore) {
+			return c.Next()
+		}
+
 		ctx := prop.Extract(c.UserContext(), fiberCarrier{c})
 
 		rid := c.Get(RequestIDHeader)
@@ -49,12 +72,10 @@ func Middleware() fiber.Handler {
 		ctx = keeper.ContextWithRequestID(ctx, rid)
 		// Origen del request (IP + navegador/SO/dispositivo) para todos los logs.
 		ctx = keeper.ContextWithClient(ctx, keeper.ParseClient(c.IP(), c.Get("User-Agent")))
+		// Acumulador del evento ancho canónico: el código de negocio anota atributos con
+		// keeper.Annotate(ctx, ...) y aquí se vuelcan al span y al log de cierre (§3.1).
+		ctx = keeper.ContextWithEvent(ctx)
 		c.Set(RequestIDHeader, rid)
-
-		// Ruta saneada a UTF-8 válido: se reutiliza como nombre de span, atributo
-		// url.path y campo del log. Un request con bytes no-UTF8 (sondeos de bots a la
-		// IP pública) haría que el exportador OTLP rechace el lote COMPLETO de spans.
-		safePath := keeper.SafeUTF8(c.Path())
 
 		ctx, span := tracer.Start(ctx, c.Method()+" "+safePath,
 			trace.WithSpanKind(trace.SpanKindServer))
@@ -95,7 +116,16 @@ func Middleware() fiber.Handler {
 			attribute.String("http.request.method", c.Method()),
 			attribute.String("url.path", safePath),
 			attribute.Int("http.response.status_code", status),
+			// sample_rate: cuántos requests representa este span (1 si no hay muestreo).
+			// Permite reponderar conteos/percentiles en el análisis (§7.2).
+			attribute.Float64("sample_rate", keeper.SampleRate()),
 		)
+		// Evento ancho canónico: vuelca los atributos de negocio acumulados al span
+		// (redactados; el span no pasa por el handler de redacción de logs) (§3.1/§4.1).
+		eventAttrs := keeper.EventAttrs(ctx)
+		if len(eventAttrs) > 0 {
+			span.SetAttributes(slogAttrsToOtel(keeper.RedactAttrs(eventAttrs))...)
+		}
 		// Plantilla de ruta (ya resuelta tras c.Next()) como http.route.
 		if route := c.Route().Path; route != "" && route != "/" {
 			span.SetAttributes(attribute.String("http.route", keeper.SafeUTF8(route)))
@@ -119,14 +149,34 @@ func Middleware() fiber.Handler {
 
 		// client.address/browser/os/device los inyecta el contextHandler del SDK
 		// desde el contexto (ver ContextWithClient arriba), no se repiten aquí.
-		keeper.Logger().LogAttrs(ctx, levelFor(status), "request completed",
+		// Los atributos de negocio acumulados se agregan al evento de cierre (el
+		// handler de logs los redacta). El span ya los lleva (arriba).
+		logAttrs := []slog.Attr{
 			slog.String("http.request.method", c.Method()),
 			slog.String("url.path", safePath),
 			slog.Int("http.response.status_code", status),
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
-		)
+			slog.Float64("sample_rate", keeper.SampleRate()),
+		}
+		logAttrs = append(logAttrs, eventAttrs...)
+		keeper.Logger().LogAttrs(ctx, levelFor(status), "request completed", logAttrs...)
 		return nextErr
 	}
+}
+
+// shouldIgnorePath indica si la ruta es tráfico de plomería (health/metrics).
+// Igualdad o sufijo (las entradas de ignore empiezan con '/', así que
+// /api/v1/health matchea /health y /unhealthy no).
+func shouldIgnorePath(path string, ignore []string) bool {
+	for _, p := range ignore {
+		if p == "" {
+			continue
+		}
+		if path == p || strings.HasSuffix(path, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // levelFor mapea el status HTTP al nivel del log "request completed":
@@ -149,6 +199,29 @@ func levelFor(status int) slog.Level {
 	default:
 		return slog.LevelDebug
 	}
+}
+
+// slogAttrsToOtel convierte atributos slog a atributos de span OTel, saneando UTF-8 en
+// los strings (un byte inválido haría que el exportador rechace el lote).
+func slogAttrsToOtel(attrs []slog.Attr) []attribute.KeyValue {
+	out := make([]attribute.KeyValue, 0, len(attrs))
+	for _, a := range attrs {
+		switch a.Value.Kind() {
+		case slog.KindBool:
+			out = append(out, attribute.Bool(a.Key, a.Value.Bool()))
+		case slog.KindInt64:
+			out = append(out, attribute.Int64(a.Key, a.Value.Int64()))
+		case slog.KindUint64:
+			out = append(out, attribute.Int64(a.Key, int64(a.Value.Uint64())))
+		case slog.KindFloat64:
+			out = append(out, attribute.Float64(a.Key, a.Value.Float64()))
+		case slog.KindString:
+			out = append(out, attribute.String(a.Key, keeper.SafeUTF8(a.Value.String())))
+		default:
+			out = append(out, attribute.String(a.Key, keeper.SafeUTF8(a.Value.String())))
+		}
+	}
+	return out
 }
 
 // fiberCarrier adapta los headers del request de Fiber a TextMapCarrier de OTel

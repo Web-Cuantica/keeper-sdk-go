@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
 	"sync"
 
 	"go.opentelemetry.io/otel"
@@ -33,27 +34,34 @@ import (
 const scopeName = "github.com/Web-Cuantica/keeper-sdk-go"
 
 var (
-	mu     sync.Mutex
-	logger *slog.Logger
+	mu         sync.Mutex
+	logger     *slog.Logger
+	sampleRate = 1.0
 )
+
+// SampleRate devuelve cuántos eventos representa cada evento conservado (1/ratio de
+// muestreo). Es 1 cuando no hay muestreo. Úsalo para reponderar y para estampar
+// sample_rate en los eventos (§7.2).
+func SampleRate() float64 {
+	mu.Lock()
+	defer mu.Unlock()
+	return sampleRate
+}
 
 // Start inicializa Keeper (trazas + métricas + logs) con export OTLP, instala el
 // propagador W3C y el logger estructurado. Llamar al inicio del proceso. El shutdown
 // devuelto vacía los buffers; llamarlo en el cierre del servicio.
 func Start(ctx context.Context, opts ...Option) (func(context.Context) error, error) {
 	cfg := resolveConfig(opts...)
+	setRedactKeys(cfg.redactKeys)
+	setHashConfig(cfg.hashPepper, cfg.hashKeys)
 
 	res, err := resource.New(ctx,
 		resource.WithHost(), // host.name (columna HOST en la plataforma)
 		// Nota: NO usamos resource.WithProcess(): sus atributos (process.pid,
 		// process.executable.*, process.owner, process.runtime.*, command_args)
 		// son ruido para logs de negocio. Se dejan fuera a propósito.
-		resource.WithAttributes(
-			attribute.String("service.name", cfg.service),
-			attribute.String("service.version", cfg.version),
-			attribute.String("deployment.environment", cfg.env),
-			attribute.String("service.instance.id", instanceID()),
-		),
+		resource.WithAttributes(deployResourceAttrs(cfg)...),
 	)
 	if err != nil {
 		// Conflictos de schema entre detectores no son fatales: se usa lo detectado.
@@ -73,7 +81,15 @@ func Start(ctx context.Context, opts ...Option) (func(context.Context) error, er
 	if err != nil {
 		return nil, fmt.Errorf("keeper: exporter de trazas: %w", err)
 	}
-	tp := sdktrace.NewTracerProvider(sdktrace.WithResource(res), sdktrace.WithBatcher(traceExp))
+	sampler, rate := samplerForRatio(resolveSampleRatio(cfg.sampleRatio, os.Getenv))
+	mu.Lock()
+	sampleRate = rate
+	mu.Unlock()
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithResource(res),
+		sdktrace.WithBatcher(traceExp),
+		sdktrace.WithSampler(sampler),
+	)
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{}, propagation.Baggage{}))
@@ -111,7 +127,7 @@ func Start(ctx context.Context, opts ...Option) (func(context.Context) error, er
 	// slog -> OTel logs (handler propio: fija SeverityText), con request_id de
 	// contexto, redacción y nivel mínimo.
 	var h slog.Handler = newOtelHandler(lp.Logger(scopeName))
-	h = redactHandler{next: h, keys: cfg.redactKeys}
+	h = redactHandler{next: h, keys: cfg.redactKeys, hashKeys: cfg.hashKeys, pepper: cfg.hashPepper}
 	h = contextHandler{next: h}
 	h = &leveledHandler{next: h, level: cfg.level}
 
@@ -173,6 +189,24 @@ func LogError(ctx context.Context, msg string, err error, attrs ...slog.Attr) {
 	)
 	all = append(all, attrs...)
 	Logger().LogAttrs(ctx, slog.LevelError, msg, all...)
+}
+
+// deployResourceAttrs arma los atributos del resource con el contexto de deploy (§3.2):
+// servicio, versión, ambiente, instancia y, si están disponibles, build_id/commit_hash.
+func deployResourceAttrs(cfg config) []attribute.KeyValue {
+	attrs := []attribute.KeyValue{
+		attribute.String("service.name", cfg.service),
+		attribute.String("service.version", cfg.version),
+		attribute.String("deployment.environment", cfg.env),
+		attribute.String("service.instance.id", instanceID()),
+	}
+	if cfg.buildID != "" {
+		attrs = append(attrs, attribute.String("build_id", cfg.buildID))
+	}
+	if cfg.commitHash != "" {
+		attrs = append(attrs, attribute.String("commit_hash", cfg.commitHash))
+	}
+	return attrs
 }
 
 // endpointParts separa un endpoint OTLP "http://host:puerto" en host y si es inseguro.

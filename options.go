@@ -8,13 +8,18 @@ import (
 
 // config es la configuración resuelta del SDK (opciones + entorno).
 type config struct {
-	service    string
-	env        string
-	version    string
-	endpoint   string
-	level      slog.Level
-	levelSet   bool
-	redactKeys map[string]struct{}
+	service     string
+	env         string
+	version     string
+	endpoint    string
+	level       slog.Level
+	levelSet    bool
+	redactKeys  map[string]struct{}
+	hashKeys    map[string]struct{} // PII hasheable (§3.4); vacío ⇒ defaultHashKeys
+	hashPepper  string              // HMAC pepper; vacío ⇒ PII se censura con "***"
+	sampleRatio *float64            // nil => usar entorno/def; ver resolveSampleRatio (§7)
+	buildID     string              // build_id (§3.2): vacío => no se emite
+	commitHash  string              // commit_hash (§3.2): vacío => no se emite
 }
 
 // Option configura el SDK. Las opciones tienen prioridad sobre las variables de entorno.
@@ -73,6 +78,58 @@ func WithRedactKeys(keys ...string) Option {
 	}
 }
 
+// WithHashPepper fija el pepper HMAC para hashes one-way de identificadores
+// sensibles (§3.4 SHOULD). Debe ser el MISMO en todos los servicios de la
+// organización para correlacionar. También: KEEPER_HASH_PEPPER.
+// Sin pepper, las claves hasheables se censuran con "***" (no se emite el valor).
+func WithHashPepper(pepper string) Option {
+	return func(c *config) {
+		c.hashPepper = pepper
+	}
+}
+
+// WithHashKeys reemplaza el conjunto de claves que se hashean (en lugar de
+// censurar) cuando hay pepper. Por defecto: email, curp, rfc, vin, ssn.
+// Los secretos (password/token/…) no deben incluirse aquí.
+func WithHashKeys(keys ...string) Option {
+	return func(c *config) {
+		m := make(map[string]struct{}, len(keys))
+		for _, k := range keys {
+			if k != "" {
+				m[strings.ToLower(k)] = struct{}{}
+			}
+		}
+		c.hashKeys = m
+	}
+}
+
+// WithSampleRatio fija la proporción de muestreo de trazas en [0,1] (1 = sin muestreo,
+// 0.1 = 1 de cada 10). Tiene prioridad sobre OTEL_TRACES_SAMPLER del entorno. El
+// sample_rate resultante (1/ratio) se estampa en el span del request (§7).
+func WithSampleRatio(r float64) Option {
+	return func(c *config) {
+		c.sampleRatio = &r
+	}
+}
+
+// WithBuildID fija el build_id del artefacto desplegado (resource, §3.2).
+func WithBuildID(id string) Option {
+	return func(c *config) {
+		if id != "" {
+			c.buildID = id
+		}
+	}
+}
+
+// WithCommitHash fija el commit_hash desplegado (resource, §3.2): atribuye regresiones al deploy.
+func WithCommitHash(h string) Option {
+	return func(c *config) {
+		if h != "" {
+			c.commitHash = h
+		}
+	}
+}
+
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if v != "" {
@@ -90,6 +147,10 @@ func resolveConfig(opts ...Option) config {
 		version:    firstNonEmpty(os.Getenv("KEEPER_SERVICE_VERSION"), os.Getenv("APP_VERSION"), "0.0.0"),
 		endpoint:   firstNonEmpty(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), "http://localhost:4318"),
 		redactKeys: defaultRedactKeys(),
+		hashKeys:   defaultHashKeys(),
+		hashPepper: os.Getenv("KEEPER_HASH_PEPPER"),
+		buildID:    os.Getenv("KEEPER_BUILD_ID"),
+		commitHash: firstNonEmpty(os.Getenv("KEEPER_COMMIT_HASH"), os.Getenv("GIT_COMMIT"), os.Getenv("COMMIT_SHA")),
 	}
 	if env := os.Getenv("KEEPER_LOG_LEVEL"); env != "" {
 		c.level = parseLevel(env)

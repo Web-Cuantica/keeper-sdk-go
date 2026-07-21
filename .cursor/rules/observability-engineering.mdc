@@ -1,0 +1,31 @@
+---
+description: Estándares de observabilidad e instrumentación del proyecto. Aplicar al instrumentar código, emitir logs/trazas/métricas o diseñar SLOs, alertas, muestreo y pipelines de telemetría.
+alwaysApply: true
+---
+
+Este repositorio emite telemetría (logs estructurados, trazas, métricas, alertas) hacia un backend de observabilidad.
+
+Antes de instrumentar código, tocar el logging o diseñar SLOs/alertas, lee y aplica los estándares definidos en el documento raíz [`OBSERVABILITY-ENGINEERING.md`](mdc:OBSERVABILITY-ENGINEERING.md).
+
+Ese documento es la **fuente de verdad** e incluye:
+- Cuándo usar monitoreo (infra, known-unknowns) y cuándo observabilidad (tu código, unknown-unknowns).
+- El evento ancho estructurado: un evento por unidad de trabajo, campos base y alta cardinalidad.
+- Trazas (5 campos obligatorios, propagación W3C) y spans propios sobre auto-instrumentación.
+- SLOs por evento, error budget deslizante de 30 días y burn alerts (factor de 4, extrapolación proporcional).
+- Muestreo con `sample_rate` en el evento y pipelines de telemetría.
+- Convenciones semánticas (OTel semconv) y esquemas de telemetría como lenguaje compartido de humanos e IA.
+- Observabilidad de IA (LLMs/agentes) y feedback loops dev/ops ("test in prod"); gobernanza (costo vs inversión, build vs buy).
+- Checklists, anti-patrones y plantilla de ADR.
+
+Reglas críticas que nunca debes violar sin justificación explícita (ADR):
+- Un evento canónico ancho por unidad de trabajo; no N logs narrativos sueltos por request.
+- Captura alta cardinalidad (user_id, ids de negocio, build_id); agrega en consulta, nunca en escritura.
+- Nunca claves de campo dinámicas/de un solo uso: el dato variable va como valor.
+- Ningún PR se fusiona sin su instrumentación ("¿cómo sabré si este cambio funciona?").
+- Alerta solo por síntomas de usuario accionables; jamás por causas (CPU/memoria/disco).
+- Todo evento muestreado lleva su `sample_rate`; reponderar al analizar.
+- Nunca secrets ni PII sin enmascarar en la telemetría.
+- Instrumenta con estándares abiertos (OpenTelemetry); nada de lock-in de agentes propietarios.
+- Cierra el loop del developer: valida la intención en producción con datos precisos, no con "sin spike de errores".
+
+Documentos hermanos: `AI-ENGINEERING.md` (metodología de la feature de IA), `MCP-ENGINEERING.md` (protocolo MCP de tools) y `AGENT-ENGINEERING.md` (sistemas agénticos) — si existen en el repo, aplican en sus dominios.
