@@ -154,6 +154,31 @@ func TestLevelFor(t *testing.T) {
 	}
 }
 
+// TestMensajeDeCierre verifica que el log de cierre lleva método, ruta y una razón
+// específica por status en el cuerpo (no el genérico "request completed").
+func TestMensajeDeCierre(t *testing.T) {
+	casos := []struct {
+		method string
+		ruta   string
+		status int
+		want   string
+	}{
+		{"GET", "/api/v1/fleet/:id", 404, "GET /api/v1/fleet/:id → 404 no encontrado"},
+		{"GET", "/api/v1/driving-score/me", 403, "GET /api/v1/driving-score/me → 403 acceso denegado"},
+		{"POST", "/api/v1/auth/login", 401, "POST /api/v1/auth/login → 401 no autenticado"},
+		{"POST", "/api/v1/clients/", 400, "POST /api/v1/clients/ → 400 solicitud inválida"},
+		{"GET", "/api/v1/fleet", 429, "GET /api/v1/fleet → 429 límite de peticiones excedido"},
+		{"GET", "/api/v1/fleet", 200, "GET /api/v1/fleet → 200 ok"},
+		{"GET", "/api/v1/fleet", 500, "GET /api/v1/fleet → 500 error del servidor"},
+		{"GET", "/api/v1/fleet", 418, "GET /api/v1/fleet → 418 error del cliente"},
+	}
+	for _, c := range casos {
+		if got := mensajeDeCierre(c.method, c.ruta, c.status); got != c.want {
+			t.Errorf("mensajeDeCierre(%s, %s, %d) = %q, want %q", c.method, c.ruta, c.status, got, c.want)
+		}
+	}
+}
+
 // TestMiddlewareVuelcaEventoCanonico verifica que los atributos de negocio anotados con
 // keeper.Annotate durante el handler terminan en el span del request (evento ancho
 // canónico), incluido el sample_rate, y que un secreto anotado se redacta.

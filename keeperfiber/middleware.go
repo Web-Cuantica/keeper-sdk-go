@@ -126,9 +126,15 @@ func Middleware(cfg ...MiddlewareConfig) fiber.Handler {
 		if len(eventAttrs) > 0 {
 			span.SetAttributes(slogAttrsToOtel(keeper.RedactAttrs(eventAttrs))...)
 		}
-		// Plantilla de ruta (ya resuelta tras c.Next()) como http.route.
+		// Plantilla de ruta (ya resuelta tras c.Next()) como http.route, y como
+		// nombre del span (semconv HTTP: "{método} {http.route}") — agrupa por
+		// operación sin explotar en cardinalidad por los ids de la URL.
+		rutaLegible := safePath
 		if route := c.Route().Path; route != "" && route != "/" {
-			span.SetAttributes(attribute.String("http.route", keeper.SafeUTF8(route)))
+			ruta := keeper.SafeUTF8(route)
+			span.SetAttributes(attribute.String("http.route", ruta))
+			span.SetName(c.Method() + " " + ruta)
+			rutaLegible = ruta
 		}
 		// Excepciones: todo 5xx se registra como excepción del span (aparece en la
 		// vista Excepciones de Keeper), salvo que el recover de un panic ya lo haya
@@ -159,8 +165,53 @@ func Middleware(cfg ...MiddlewareConfig) fiber.Handler {
 			slog.Float64("sample_rate", keeper.SampleRate()),
 		}
 		logAttrs = append(logAttrs, eventAttrs...)
-		keeper.Logger().LogAttrs(ctx, levelFor(status), "request completed", logAttrs...)
+		keeper.Logger().LogAttrs(ctx, levelFor(status), mensajeDeCierre(c.Method(), rutaLegible, status), logAttrs...)
 		return nextErr
+	}
+}
+
+// mensajeDeCierre construye el cuerpo del log de cierre del request: método, ruta
+// (plantilla si existe) y una razón legible por status — p. ej.
+// "GET /api/v1/fleet/:id → 404 no encontrado" — en lugar del genérico
+// "request completed", que obligaba a leer los atributos para saber qué pasó.
+// La URL concreta y el resto del contexto siguen en los atributos (url.path, etc.).
+func mensajeDeCierre(method, ruta string, status int) string {
+	return fmt.Sprintf("%s %s → %d %s", method, ruta, status, razonHTTP(status))
+}
+
+// razonHTTP traduce el status a una razón corta en el idioma de los logs del
+// estándar. Los casos enumerados son los que el negocio ve a diario; el resto
+// cae en la familia.
+func razonHTTP(status int) string {
+	switch status {
+	case fiber.StatusBadRequest:
+		return "solicitud inválida"
+	case fiber.StatusUnauthorized:
+		return "no autenticado"
+	case fiber.StatusForbidden:
+		return "acceso denegado"
+	case fiber.StatusNotFound:
+		return "no encontrado"
+	case fiber.StatusMethodNotAllowed:
+		return "método no permitido"
+	case fiber.StatusConflict:
+		return "conflicto"
+	case fiber.StatusUnprocessableEntity:
+		return "datos no procesables"
+	case fiber.StatusTooManyRequests:
+		return "límite de peticiones excedido"
+	case fiber.StatusServiceUnavailable:
+		return "servicio no disponible"
+	}
+	switch {
+	case status >= 500:
+		return "error del servidor"
+	case status >= 400:
+		return "error del cliente"
+	case status >= 300:
+		return "redirección"
+	default:
+		return "ok"
 	}
 }
 
