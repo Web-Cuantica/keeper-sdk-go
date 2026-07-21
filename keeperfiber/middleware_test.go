@@ -132,24 +132,30 @@ func TestMiddlewareIgnorePathsVacioNoIgnora(t *testing.T) {
 
 func TestLevelFor(t *testing.T) {
 	casos := []struct {
-		status int
-		want   slog.Level
+		status     int
+		logSuccess bool
+		want       slog.Level
 	}{
-		{200, slog.LevelDebug}, // éxito → debug (no se exporta en prod; el log de negocio cubre el evento)
-		{201, slog.LevelDebug},
-		{204, slog.LevelDebug},
-		{304, slog.LevelDebug},
-		{400, slog.LevelWarn}, // 4xx (salvo 404) → warn
-		{401, slog.LevelWarn},
-		{403, slog.LevelWarn},
-		{409, slog.LevelWarn},
-		{404, slog.LevelDebug}, // 404 → debug: cliente/escáneres de internet, no se exporta
-		{500, slog.LevelError}, // 5xx → error
-		{503, slog.LevelError},
+		{200, false, slog.LevelDebug}, // éxito → debug por default (el span es el evento canónico)
+		{201, false, slog.LevelDebug},
+		{204, false, slog.LevelDebug},
+		{304, false, slog.LevelDebug},
+		{200, true, slog.LevelInfo}, // con logSuccess el éxito sube a Info (visible en prod)
+		{204, true, slog.LevelInfo},
+		{304, true, slog.LevelInfo},
+		{400, false, slog.LevelWarn}, // 4xx (salvo 404) → warn
+		{401, false, slog.LevelWarn},
+		{403, false, slog.LevelWarn},
+		{409, false, slog.LevelWarn},
+		{404, false, slog.LevelDebug}, // 404 → debug: cliente/escáneres de internet, no se exporta
+		{404, true, slog.LevelDebug},  // logSuccess NO rescata al 404 (sigue siendo ruido de bots)
+		{500, false, slog.LevelError}, // 5xx → error
+		{503, false, slog.LevelError},
+		{500, true, slog.LevelError},
 	}
 	for _, c := range casos {
-		if got := levelFor(c.status); got != c.want {
-			t.Errorf("levelFor(%d) = %v, want %v", c.status, got, c.want)
+		if got := levelFor(c.status, c.logSuccess); got != c.want {
+			t.Errorf("levelFor(%d, %v) = %v, want %v", c.status, c.logSuccess, got, c.want)
 		}
 	}
 }

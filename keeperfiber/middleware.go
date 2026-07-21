@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +36,12 @@ type MiddlewareConfig struct {
 	// IgnorePaths son rutas (sufijo o exactas) que NO generan telemetría.
 	// nil ⇒ defaultIgnorePaths; slice vacío ⇒ no se ignora ninguna.
 	IgnorePaths []string
+	// LogSuccess exporta también los cierres exitosos (<400) en nivel Info.
+	// Default false: el 2xx queda en Debug y su evento canónico es el SPAN —
+	// menos volumen de logs, misma información. Enciéndelo cuando la operación
+	// prefiera leer el tráfico en la vista de Logs (es una perilla de
+	// verbosidad, reversible sin tocar código con KEEPER_HTTP_LOG_SUCCESS=true).
+	LogSuccess bool
 }
 
 // Middleware instala observabilidad por request en una app Fiber:
@@ -48,6 +56,8 @@ func Middleware(cfg ...MiddlewareConfig) fiber.Handler {
 	if len(cfg) > 0 && cfg[0].IgnorePaths != nil {
 		ignore = cfg[0].IgnorePaths
 	}
+	// Config o entorno (ops puede encenderlo sin redeploy de código).
+	logSuccess := (len(cfg) > 0 && cfg[0].LogSuccess) || envBool("KEEPER_HTTP_LOG_SUCCESS")
 	tracer := otel.Tracer(scopeName)
 	prop := otel.GetTextMapPropagator()
 
@@ -165,9 +175,15 @@ func Middleware(cfg ...MiddlewareConfig) fiber.Handler {
 			slog.Float64("sample_rate", keeper.SampleRate()),
 		}
 		logAttrs = append(logAttrs, eventAttrs...)
-		keeper.Logger().LogAttrs(ctx, levelFor(status), mensajeDeCierre(c.Method(), rutaLegible, status), logAttrs...)
+		keeper.Logger().LogAttrs(ctx, levelFor(status, logSuccess), mensajeDeCierre(c.Method(), rutaLegible, status), logAttrs...)
 		return nextErr
 	}
+}
+
+// envBool interpreta una variable de entorno como booleano (false si falta o es inválida).
+func envBool(key string) bool {
+	b, err := strconv.ParseBool(strings.TrimSpace(os.Getenv(key)))
+	return err == nil && b
 }
 
 // mensajeDeCierre construye el cuerpo del log de cierre del request: método, ruta
@@ -230,16 +246,16 @@ func shouldIgnorePath(path string, ignore []string) bool {
 	return false
 }
 
-// levelFor mapea el status HTTP al nivel del log "request completed":
+// levelFor mapea el status HTTP al nivel del log de cierre:
 //   - 5xx → Error: fallo del servidor, siempre se registra.
 //   - 404 → Debug: "no encontrado" es casi siempre cliente o escáneres de internet
 //     sondeando la IP pública (/.env, /.git/config, …); no es una señal accionable del
 //     servidor. En producción (nivel info) NO se exporta, evitando el ruido de los bots.
 //   - resto de 4xx (400/401/403/409/422…) → Warn: fallo a nivel HTTP que sí interesa ver.
-//   - <400 (éxito) → Debug: en producción NO se exporta. El evento de negocio ya lo
-//     cubren los logs semánticos de cada handler ("Cliente creado", etc.) y la traza;
-//     así se evita el ruido de un "request completed" duplicado por request.
-func levelFor(status int) slog.Level {
+//   - <400 (éxito) → Debug por default (el evento canónico del request es el span; así
+//     se evita duplicar señal). Con logSuccess=true sube a Info: la operación prefiere
+//     leer también el tráfico exitoso en la vista de Logs.
+func levelFor(status int, logSuccess bool) slog.Level {
 	switch {
 	case status >= 500:
 		return slog.LevelError
@@ -247,6 +263,8 @@ func levelFor(status int) slog.Level {
 		return slog.LevelDebug
 	case status >= 400:
 		return slog.LevelWarn
+	case logSuccess:
+		return slog.LevelInfo
 	default:
 		return slog.LevelDebug
 	}
