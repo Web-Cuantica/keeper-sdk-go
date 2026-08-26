@@ -36,6 +36,16 @@ type MiddlewareConfig struct {
 	// IgnorePaths son rutas (sufijo o exactas) que NO generan telemetría.
 	// nil ⇒ defaultIgnorePaths; slice vacío ⇒ no se ignora ninguna.
 	IgnorePaths []string
+	// RedactPathParams son nombres de parámetros de ruta cuyo VALOR es una
+	// credencial y no debe quedar en telemetría (p. ej. "token" en
+	// /public/quotes/:token, que es la liga con la que un cliente acepta una
+	// cotización). El valor se sustituye por ":nombre" en `url.path` y en el log
+	// de cierre; `http.route` ya era seguro porque es la plantilla.
+	//
+	// Sin esto, un secreto que viaja por la URL queda en reposo dentro del backend
+	// de telemetría: quien pueda leer las trazas puede usar la credencial. Es el
+	// mismo criterio que la redacción de claves sensibles en los logs (§9).
+	RedactPathParams []string
 	// LogSuccess exporta también los cierres exitosos (<400) en nivel Info.
 	// Default false: el 2xx queda en Debug y su evento canónico es el SPAN —
 	// menos volumen de logs, misma información. Enciéndelo cuando la operación
@@ -58,6 +68,10 @@ func Middleware(cfg ...MiddlewareConfig) fiber.Handler {
 	}
 	// Config o entorno (ops puede encenderlo sin redeploy de código).
 	logSuccess := (len(cfg) > 0 && cfg[0].LogSuccess) || envBool("KEEPER_HTTP_LOG_SUCCESS")
+	var redactParams []string
+	if len(cfg) > 0 {
+		redactParams = cfg[0].RedactPathParams
+	}
 	tracer := otel.Tracer(scopeName)
 	prop := otel.GetTextMapPropagator()
 
@@ -122,9 +136,13 @@ func Middleware(cfg ...MiddlewareConfig) fiber.Handler {
 			}
 		}
 
+		// La ruta ya está resuelta tras c.Next(), así que aquí sí se pueden ubicar
+		// los parámetros sensibles y sacar su valor del path que se exporta.
+		pathExportable := redactPathParams(c, safePath, redactParams)
+
 		span.SetAttributes(
 			attribute.String("http.request.method", c.Method()),
-			attribute.String("url.path", safePath),
+			attribute.String("url.path", pathExportable),
 			attribute.Int("http.response.status_code", status),
 			// sample_rate: cuántos requests representa este span (1 si no hay muestreo).
 			// Permite reponderar conteos/percentiles en el análisis (§7.2).
@@ -139,7 +157,7 @@ func Middleware(cfg ...MiddlewareConfig) fiber.Handler {
 		// Plantilla de ruta (ya resuelta tras c.Next()) como http.route, y como
 		// nombre del span (semconv HTTP: "{método} {http.route}") — agrupa por
 		// operación sin explotar en cardinalidad por los ids de la URL.
-		rutaLegible := safePath
+		rutaLegible := pathExportable
 		if route := c.Route().Path; route != "" && route != "/" {
 			ruta := keeper.SafeUTF8(route)
 			span.SetAttributes(attribute.String("http.route", ruta))
@@ -305,4 +323,29 @@ func (f fiberCarrier) Keys() []string {
 		keys = append(keys, string(k))
 	})
 	return keys
+}
+
+// redactPathParams sustituye en el path el VALOR de los parámetros marcados como
+// sensibles por su nombre (":token"), dejando el resto de la URL intacta.
+//
+// Se sustituye por segmento completo y no por búsqueda de texto: un valor corto
+// podría aparecer por casualidad dentro de otro segmento y romper una ruta que sí
+// es legítima de leer.
+func redactPathParams(c *fiber.Ctx, path string, params []string) string {
+	if len(params) == 0 || path == "" {
+		return path
+	}
+	segments := strings.Split(path, "/")
+	for _, name := range params {
+		valor := c.Params(name)
+		if valor == "" {
+			continue
+		}
+		for i, seg := range segments {
+			if seg == valor {
+				segments[i] = ":" + name
+			}
+		}
+	}
+	return strings.Join(segments, "/")
 }
