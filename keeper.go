@@ -82,6 +82,9 @@ func Start(ctx context.Context, opts ...Option) (func(context.Context) error, er
 		return nil, fmt.Errorf("keeper: exporter de trazas: %w", err)
 	}
 	sampler, rate := samplerForRatio(resolveSampleRatio(cfg.sampleRatio, os.Getenv))
+	// El ruido de sondeo se descarta antes de muestrear: no tiene sentido gastar
+	// cuota de muestreo en spans que nadie va a leer.
+	sampler = conFiltroDeRuido(sampler, cfg.dropRootSpans)
 	mu.Lock()
 	sampleRate = rate
 	mu.Unlock()

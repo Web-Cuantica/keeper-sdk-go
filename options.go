@@ -18,8 +18,10 @@ type config struct {
 	hashKeys    map[string]struct{} // PII hasheable (§3.4); vacío ⇒ defaultHashKeys
 	hashPepper  string              // HMAC pepper; vacío ⇒ PII se censura con "***"
 	sampleRatio *float64            // nil => usar entorno/def; ver resolveSampleRatio (§7)
-	buildID     string              // build_id (§3.2): vacío => no se emite
-	commitHash  string              // commit_hash (§3.2): vacío => no se emite
+	// dropRootSpans: prefijos de spans RAÍZ a descartar (ruido de sondeo, §7).
+	dropRootSpans []string
+	buildID       string // build_id (§3.2): vacío => no se emite
+	commitHash    string // commit_hash (§3.2): vacío => no se emite
 }
 
 // Option configura el SDK. Las opciones tienen prioridad sobre las variables de entorno.
@@ -110,6 +112,20 @@ func WithSampleRatio(r float64) Option {
 	return func(c *config) {
 		c.sampleRatio = &r
 	}
+}
+
+// WithDropRootSpans descarta los spans RAÍZ cuyo nombre empieza con alguno de
+// los prefijos dados. Los que cuelgan de otro span NO se tocan.
+//
+// Es la versión para trabajo interno de lo que IgnorePaths hace con el HTTP: un
+// poller que consulta la base cada pocos segundos genera un span raíz por vuelta
+// y termina siendo lo único que se ve en la lista de trazas. Con
+// WithDropRootSpans("gorm.") ese ruido desaparece y las mismas consultas siguen
+// visibles dentro de las peticiones reales, que es donde explican algo.
+//
+//	keeper.Start(ctx, keeper.WithDropRootSpans("gorm."))
+func WithDropRootSpans(prefijos ...string) Option {
+	return func(c *config) { c.dropRootSpans = append(c.dropRootSpans, prefijos...) }
 }
 
 // WithBuildID fija el build_id del artefacto desplegado (resource, §3.2).
