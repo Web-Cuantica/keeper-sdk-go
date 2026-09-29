@@ -18,8 +18,8 @@ Validado con `go test -cover ./...`:
 
 | Paquete | Cobertura |
 |---------|-----------|
-| `keeper` | **65.4%** (`Start()` requiere OTLP vivo → smoke) |
-| `keeperfiber` | **83.5%** |
+| `keeper` | **83.3%** (`Start()` con OTLP real → smoke; con `WithSinExportar` se prueba en unidad) |
+| `keeperfiber` | **84.7%** |
 
 - [x] **GO-0** — `OBSERVABILITY-ENGINEERING.md` + `.cursor/rules/…` + `AGENTS.md`/`CLAUDE.md`.
 - [x] **GO-1** — evento ancho: `ContextWithEvent` / `Annotate` / `EventAttrs`; middleware vuelca al span + log.
@@ -32,6 +32,12 @@ Validado con `go test -cover ./...`:
 - [x] **GO-8** — `Middleware(MiddlewareConfig{IgnorePaths})`; default `/health|/healthz|/live|/ready|/ping|/metrics`.
 - [x] **GO-9** — hash one-way HMAC-SHA256 (`WithHashPepper` / `KEEPER_HASH_PEPPER`); claves
   `email/curp/rfc/vin/ssn` → `h1:<hex>`; secretos siguen en `***`.
+- [x] **GO-11** — contrato de telemetría: `WithContrato` (`Operativo`/`Identificador`, modos
+  `Reportar`/`Descartar`) aplicado en la cadena de logs, en el exportador de trazas (span y
+  eventos) y en una vista de métricas; `Violaciones()` y la métrica
+  `keeper.contrato.violaciones` (sin la clave, para no crear cardinalidad).
+- [x] **GO-12** — `WithLogStdout` / `KEEPER_LOG_STDOUT` (copia JSON con `trace_id` a stdout) y
+  `WithSinExportar` (pipeline completo sin salir del proceso, para pruebas de contrato).
 - [ ] **GO-10** — helpers GenAI semconv (`gen_ai.*`) si hay uso real de LLMs.
 
 ## Pendiente (roadmap)

@@ -64,14 +64,62 @@ Produce un log correlacionado con la traza activa, con `service.name`/`deploymen
 | `WithRedactKeys` | — | `authorization,password,token,secret,vin,email,...` |
 | `WithHashPepper` | `KEEPER_HASH_PEPPER` | vacío (PII → `***`; con pepper → hash `h1:…`) |
 | `WithHashKeys` | — | `email,curp,rfc,vin,ssn` (solo identificadores; nunca secretos) |
+| `WithContrato` | — | sin contrato: no se filtra nada (ver abajo) |
+| `WithLogStdout` | `KEEPER_LOG_STDOUT` | apagado: los logs solo viajan a Keeper |
+| `WithSinExportar` | — | apagado: exporta por OTLP |
 
 Con `KEEPER_HASH_PEPPER` (el **mismo** en todos los servicios), los identificadores
 sensibles se emiten como HMAC-SHA256 one-way (`h1:<hex>`) para correlacionar sin
 exponer el dato. Los secretos (`password`/`token`/…) siguen censurándose con `***`.
 
+## Contrato de telemetría (modo estricto)
+
+La censura por nombre de campo no ve un nombre de persona guardado en un campo llamado
+`persona`. El contrato cierra ese hueco: el servicio declara qué atributos puede emitir y
+lo demás no sale del proceso.
+
+```go
+keeper.Start(ctx,
+	keeper.WithContrato(keeper.Contrato{
+		Modo: keeper.Descartar,
+		Atributos: map[string]keeper.Clasificacion{
+			"pld.desenlace":        keeper.Operativo,
+			"pld.solicitante.curp": keeper.Identificador,
+		},
+	}),
+)
+```
+
+- **Dónde se aplica:** en la cadena de logs (incluido `logger.With`), en el exportador de
+  trazas (atributos del span y de sus eventos, también los que ponen las librerías de
+  instrumentación) y en una vista sobre todas las métricas.
+- **Qué siempre sale:** lo que emiten el SDK y `keeperfiber` (`request_id`, `http.*`,
+  `url.path`, `client.*`, `exception.*`, `enduser.id`, `business.success`, …).
+- **Clasificación:** `Operativo` sale tal cual. `Identificador` sale solo como hash `h1:…`
+  con pepper, censurado sin pepper, y nunca en métricas.
+- **Modos:** `Reportar` deja pasar lo no declarado y lo cuenta, para adoptar el contrato en
+  un servicio que ya emite de todo. `Descartar` lo quita y lo cuenta.
+- **Visibilidad:** `keeper.Violaciones()` devuelve cada clave fuera del contrato con su
+  señal y su conteo; la métrica `keeper.contrato.violaciones` (atributos `senal` y
+  `accion`, sin la clave) alimenta la alerta en Keeper; y el primer caso de cada clave se
+  avisa en stderr.
+- **Origen del contrato:** lo normal es generarlo desde un registro de convenciones
+  semánticas en YAML (formato de OpenTelemetry Weaver), no escribirlo a mano.
+
+**Prueba de contrato de un servicio:** arranca con `WithSinExportar()` y el contrato, corre
+los flujos y falla si `keeper.Violaciones()` no está vacío. Con `WithSinExportar` las
+trazas se procesan en síncrono, así que las violaciones se ven en cuanto el span termina.
+
+## Salida a consola
+
+Sin `WithLogStdout` los logs solo viajan a Keeper y `docker logs` queda vacío. Con la opción
+(o `KEEPER_LOG_STDOUT=true`), cada log se copia a stdout en JSON, ya filtrado y censurado,
+con `trace_id` y `span_id` para ir de la consola a la traza.
+
 ## API
 
 - `keeper.Start(ctx, opts...) (shutdown, error)` — inicializa trazas+métricas+logs (OTLP) y el logger.
+- `keeper.Violaciones()` / `keeper.ReiniciarViolaciones()` — atributos fuera del contrato vistos y su conteo.
 - `keeper.Logger() *slog.Logger` — logger estructurado; úsalo con el `ctx` del request para correlacionar.
 - `keeper.LogError(ctx, msg, err, attrs...)` — loguea error con `exception.*` y lo registra en el span.
 - `keeper.HashID(value)` — hash one-way manual (requiere pepper); normalmente lo hace el redact automático.

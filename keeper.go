@@ -53,6 +53,17 @@ func SampleRate() float64 {
 // devuelto vacía los buffers; llamarlo en el cierre del servicio.
 func Start(ctx context.Context, opts ...Option) (func(context.Context) error, error) {
 	cfg := resolveConfig(opts...)
+	var contrato *contratoActivo
+	if cfg.contrato != nil {
+		contrato = nuevoContratoActivo(*cfg.contrato)
+		// Lo que el contrato clasifica como identificador se censura o se hashea
+		// siempre, aunque su nombre no esté entre las claves sensibles por defecto.
+		for _, k := range contrato.clavesIdentificador() {
+			cfg.redactKeys[k] = struct{}{}
+			cfg.hashKeys[k] = struct{}{}
+		}
+	}
+	setContrato(contrato)
 	setRedactKeys(cfg.redactKeys)
 	setHashConfig(cfg.hashPepper, cfg.hashKeys)
 
@@ -73,13 +84,20 @@ func Start(ctx context.Context, opts ...Option) (func(context.Context) error, er
 	host, insecure := endpointParts(cfg.endpoint)
 
 	// --- Trazas ---
-	traceOpts := []otlptrace.Option{otlptrace.WithEndpoint(host)}
-	if insecure {
-		traceOpts = append(traceOpts, otlptrace.WithInsecure())
+	var spanExp sdktrace.SpanExporter = exportadorNulo{}
+	if !cfg.sinExportar {
+		traceOpts := []otlptrace.Option{otlptrace.WithEndpoint(host)}
+		if insecure {
+			traceOpts = append(traceOpts, otlptrace.WithInsecure())
+		}
+		traceExp, err := otlptrace.New(ctx, traceOpts...)
+		if err != nil {
+			return nil, fmt.Errorf("keeper: exporter de trazas: %w", err)
+		}
+		spanExp = traceExp
 	}
-	traceExp, err := otlptrace.New(ctx, traceOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("keeper: exporter de trazas: %w", err)
+	if contrato != nil {
+		spanExp = exportadorConContrato{next: spanExp, c: contrato}
 	}
 	sampler, rate := samplerForRatio(resolveSampleRatio(cfg.sampleRatio, os.Getenv))
 	// El ruido de sondeo se descarta antes de muestrear: no tiene sentido gastar
@@ -88,49 +106,68 @@ func Start(ctx context.Context, opts ...Option) (func(context.Context) error, er
 	mu.Lock()
 	sampleRate = rate
 	mu.Unlock()
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithResource(res),
-		sdktrace.WithBatcher(traceExp),
-		sdktrace.WithSampler(sampler),
-	)
+	tpOpts := []sdktrace.TracerProviderOption{sdktrace.WithResource(res), sdktrace.WithSampler(sampler)}
+	if cfg.sinExportar {
+		// Síncrono: una prueba ve las violaciones de un span en cuanto el span termina.
+		tpOpts = append(tpOpts, sdktrace.WithSyncer(spanExp))
+	} else {
+		tpOpts = append(tpOpts, sdktrace.WithBatcher(spanExp))
+	}
+	tp := sdktrace.NewTracerProvider(tpOpts...)
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{}, propagation.Baggage{}))
 
 	// --- Métricas ---
-	metricOpts := []otlpmetric.Option{otlpmetric.WithEndpoint(host)}
-	if insecure {
-		metricOpts = append(metricOpts, otlpmetric.WithInsecure())
+	mpOpts := []sdkmetric.Option{sdkmetric.WithResource(res)}
+	if !cfg.sinExportar {
+		metricOpts := []otlpmetric.Option{otlpmetric.WithEndpoint(host)}
+		if insecure {
+			metricOpts = append(metricOpts, otlpmetric.WithInsecure())
+		}
+		metricExp, err := otlpmetric.New(ctx, metricOpts...)
+		if err != nil {
+			return nil, fmt.Errorf("keeper: exporter de métricas: %w", err)
+		}
+		mpOpts = append(mpOpts, sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExp)))
 	}
-	metricExp, err := otlpmetric.New(ctx, metricOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("keeper: exporter de métricas: %w", err)
+	if contrato != nil {
+		mpOpts = append(mpOpts, sdkmetric.WithView(vistaConContrato(contrato)))
 	}
-	mp := sdkmetric.NewMeterProvider(
-		sdkmetric.WithResource(res),
-		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExp)),
-	)
+	mp := sdkmetric.NewMeterProvider(mpOpts...)
 	otel.SetMeterProvider(mp)
+	if contrato != nil {
+		if err := registrarMetricaDeViolaciones(mp.Meter(scopeName), contrato); err != nil {
+			return nil, fmt.Errorf("keeper: métrica de violaciones del contrato: %w", err)
+		}
+	}
 
 	// --- Logs ---
-	logOpts := []otlplog.Option{otlplog.WithEndpoint(host)}
-	if insecure {
-		logOpts = append(logOpts, otlplog.WithInsecure())
+	lpOpts := []sdklog.LoggerProviderOption{sdklog.WithResource(res)}
+	if !cfg.sinExportar {
+		logOpts := []otlplog.Option{otlplog.WithEndpoint(host)}
+		if insecure {
+			logOpts = append(logOpts, otlplog.WithInsecure())
+		}
+		logExp, err := otlplog.New(ctx, logOpts...)
+		if err != nil {
+			return nil, fmt.Errorf("keeper: exporter de logs: %w", err)
+		}
+		lpOpts = append(lpOpts, sdklog.WithProcessor(sdklog.NewBatchProcessor(logExp)))
 	}
-	logExp, err := otlplog.New(ctx, logOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("keeper: exporter de logs: %w", err)
-	}
-	lp := sdklog.NewLoggerProvider(
-		sdklog.WithResource(res),
-		sdklog.WithProcessor(sdklog.NewBatchProcessor(logExp)),
-	)
+	lp := sdklog.NewLoggerProvider(lpOpts...)
 	otellog.SetLoggerProvider(lp)
 
 	// slog -> OTel logs (handler propio: fija SeverityText), con request_id de
-	// contexto, redacción y nivel mínimo.
+	// contexto, contrato, redacción y nivel mínimo.
 	var h slog.Handler = newOtelHandler(lp.Logger(scopeName))
+	if cfg.logStdout {
+		h = nuevaDobleSalida(h, os.Stdout)
+	}
 	h = redactHandler{next: h, keys: cfg.redactKeys, hashKeys: cfg.hashKeys, pepper: cfg.hashPepper}
+	if contrato != nil {
+		h = contratoHandler{next: h, c: contrato}
+	}
 	h = contextHandler{next: h}
 	h = &leveledHandler{next: h, level: cfg.level}
 

@@ -22,6 +22,9 @@ type config struct {
 	dropRootSpans []string
 	buildID       string // build_id (§3.2): vacío => no se emite
 	commitHash    string // commit_hash (§3.2): vacío => no se emite
+	contrato      *Contrato
+	logStdout     bool
+	sinExportar   bool
 }
 
 // Option configura el SDK. Las opciones tienen prioridad sobre las variables de entorno.
@@ -146,6 +149,14 @@ func WithCommitHash(h string) Option {
 	}
 }
 
+func envVerdadero(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "si", "sí", "on":
+		return true
+	}
+	return false
+}
+
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if v != "" {
@@ -167,6 +178,7 @@ func resolveConfig(opts ...Option) config {
 		hashPepper: os.Getenv("KEEPER_HASH_PEPPER"),
 		buildID:    os.Getenv("KEEPER_BUILD_ID"),
 		commitHash: firstNonEmpty(os.Getenv("KEEPER_COMMIT_HASH"), os.Getenv("GIT_COMMIT"), os.Getenv("COMMIT_SHA")),
+		logStdout:  envVerdadero(os.Getenv("KEEPER_LOG_STDOUT")),
 	}
 	if env := os.Getenv("KEEPER_LOG_LEVEL"); env != "" {
 		c.level = parseLevel(env)
