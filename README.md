@@ -100,8 +100,8 @@ keeper.Start(ctx,
 - **Modos:** `Reportar` deja pasar lo no declarado y lo cuenta, para adoptar el contrato en
   un servicio que ya emite de todo. `Descartar` lo quita y lo cuenta.
 - **Visibilidad:** `keeper.Violaciones()` devuelve cada clave fuera del contrato con su
-  señal y su conteo; la métrica `keeper.contrato.violaciones` (atributos `senal` y
-  `accion`, sin la clave) alimenta la alerta en Keeper; y el primer caso de cada clave se
+  señal y su conteo; la métrica `keeper.contrato.violaciones` (atributos `keeper.contrato.senal` y
+  `keeper.contrato.accion`, sin la clave) alimenta la alerta en Keeper; y el primer caso de cada clave se
   avisa en stderr.
 - **Origen del contrato:** lo normal es generarlo desde un registro de convenciones
   semánticas en YAML (formato de OpenTelemetry Weaver), no escribirlo a mano.

@@ -74,7 +74,7 @@ var propiasDelSDK = map[string]struct{}{
 	"exception.type": {}, "exception.message": {}, "exception.stacktrace": {}, "exception.escaped": {},
 	"enduser.id": {}, "tenant.id": {}, "business.success": {}, "error.kind": {}, "error.message": {},
 	"trace_id": {}, "span_id": {},
-	"senal": {}, "accion": {},
+	"keeper.contrato.senal": {}, "keeper.contrato.accion": {},
 }
 
 // contratoActivo es el contrato en uso más su contabilidad de violaciones.
@@ -220,7 +220,7 @@ func registrarMetricaDeViolaciones(m metric.Meter, c *contratoActivo) error {
 				}
 			}
 			for k, n := range totales {
-				o.Observe(n, metric.WithAttributes(attrString("senal", k[0]), attrString("accion", k[1])))
+				o.Observe(n, metric.WithAttributes(attrString("keeper.contrato.senal", k[0]), attrString("keeper.contrato.accion", k[1])))
 			}
 			return nil
 		}))

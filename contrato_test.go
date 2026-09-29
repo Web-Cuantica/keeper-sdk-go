@@ -291,7 +291,7 @@ func TestContrato_MetricaDeViolacionesSinLaClave(t *testing.T) {
 	}
 	p := suma.DataPoints[0]
 	attrs := mapa(p.Attributes.ToSlice())
-	if p.Value != 2 || attrs["senal"] != senalLogs || attrs["accion"] != "descartado" || len(attrs) != 2 {
+	if p.Value != 2 || attrs["keeper.contrato.senal"] != senalLogs || attrs["keeper.contrato.accion"] != "descartado" || len(attrs) != 2 {
 		t.Fatalf("punto inesperado (la clave no debe viajar en la métrica): valor=%d attrs=%v", p.Value, attrs)
 	}
 }
