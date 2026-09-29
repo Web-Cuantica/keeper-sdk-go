@@ -85,6 +85,9 @@ func Start(ctx context.Context, opts ...Option) (func(context.Context) error, er
 
 	// --- Trazas ---
 	var spanExp sdktrace.SpanExporter = exportadorNulo{}
+	if cfg.captura != nil {
+		spanExp = cfg.captura.spans
+	}
 	if !cfg.sinExportar {
 		traceOpts := []otlptrace.Option{otlptrace.WithEndpoint(host)}
 		if insecure {
@@ -163,6 +166,9 @@ func Start(ctx context.Context, opts ...Option) (func(context.Context) error, er
 	var h slog.Handler = newOtelHandler(lp.Logger(scopeName))
 	if cfg.logStdout {
 		h = nuevaDobleSalida(h, os.Stdout)
+	}
+	if cfg.captura != nil {
+		h = abanico{h, capturaSlog{c: cfg.captura}}
 	}
 	h = redactHandler{next: h, keys: cfg.redactKeys, hashKeys: cfg.hashKeys, pepper: cfg.hashPepper}
 	if contrato != nil {

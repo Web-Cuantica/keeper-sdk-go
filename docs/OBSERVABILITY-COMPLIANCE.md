@@ -38,6 +38,9 @@ Validado con `go test -cover ./...`:
   `keeper.contrato.violaciones` (sin la clave, para no crear cardinalidad).
 - [x] **GO-12** — `WithLogStdout` / `KEEPER_LOG_STDOUT` (copia JSON con `trace_id` a stdout) y
   `WithSinExportar` (pipeline completo sin salir del proceso, para pruebas de contrato).
+- [x] **GO-13** — `WithCaptura` para la prueba de contrato con datos (buscar una persona
+  sintética en spans, eventos y logs) y `keeperfiber.RutaParaTelemetria`. Corregido:
+  `RedactPathParams` no se aplicaba al log de cierre.
 - [ ] **GO-10** — helpers GenAI semconv (`gen_ai.*`) si hay uso real de LLMs.
 
 ## Pendiente (roadmap)

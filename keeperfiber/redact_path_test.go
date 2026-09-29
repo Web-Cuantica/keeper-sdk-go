@@ -1,10 +1,16 @@
 package keeperfiber
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // Un token que viaja por la URL es una credencial: si queda en la telemetría,
@@ -109,5 +115,72 @@ func TestRedactPathParams_ParametroInexistente(t *testing.T) {
 
 	if visto != "/api/v1/quotation/42" {
 		t.Errorf("se obtuvo %q", visto)
+	}
+}
+
+func conLogsEn(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
+}
+
+// Regresión: RedactPathParams prometía sacar el valor del log de cierre y ese log usaba la ruta
+// cruda. El secreto seguía llegando a Keeper por la vista de Logs.
+func TestRedactPathParams_TambienEnElLogDeCierre(t *testing.T) {
+	logs := conLogsEn(t)
+	app := fiber.New()
+	app.Use(Middleware(MiddlewareConfig{RedactPathParams: []string{"token"}, LogSuccess: true}))
+	app.Get("/api/v1/public/quotes/:token", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
+
+	if _, err := app.Test(httptest.NewRequest("GET", "/api/v1/public/quotes/abc123SECRETO", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(logs.String(), "abc123SECRETO") {
+		t.Fatalf("el log de cierre filtró el token:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "/api/v1/public/quotes/:token") {
+		t.Fatalf("el log de cierre debe llevar la ruta redactada:\n%s", logs.String())
+	}
+}
+
+// Un servicio que no registra identificadores decide qué ruta ve la telemetría, también cuando
+// la petición se rechaza antes de que el router la resuelva.
+func TestRutaParaTelemetria_MandaSobreSpanYLog(t *testing.T) {
+	logs := conLogsEn(t)
+	sr := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() { otel.SetTracerProvider(prev) })
+
+	app := fiber.New()
+	app.Use(Middleware(MiddlewareConfig{
+		LogSuccess:         true,
+		RutaParaTelemetria: func(*fiber.Ctx) string { return "/api/v1/clients/:clientId" },
+	}))
+	api := app.Group("/api/v1", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusUnauthorized) })
+	api.Get("/clients/:clientId", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
+
+	if _, err := app.Test(httptest.NewRequest("GET", "/api/v1/clients/zq7731x", nil)); err != nil {
+		t.Fatal(err)
+	}
+	spans := sr.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("esperaba un span, hubo %d", len(spans))
+	}
+	s := spans[0]
+	if s.Name() != "GET /api/v1/clients/:clientId" {
+		t.Errorf("nombre del span: %q", s.Name())
+	}
+	for _, kv := range s.Attributes() {
+		if strings.Contains(kv.Value.Emit(), "zq7731x") {
+			t.Errorf("el id salió en el atributo %s del span", kv.Key)
+		}
+	}
+	if strings.Contains(logs.String(), "zq7731x") {
+		t.Fatalf("el id salió en el log de cierre:\n%s", logs.String())
 	}
 }

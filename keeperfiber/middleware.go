@@ -52,6 +52,12 @@ type MiddlewareConfig struct {
 	// prefiera leer el tráfico en la vista de Logs (es una perilla de
 	// verbosidad, reversible sin tocar código con KEEPER_HTTP_LOG_SUCCESS=true).
 	LogSuccess bool
+	// RutaParaTelemetria decide qué ruta ve la telemetría: se usa para url.path,
+	// http.route, el nombre del span y el log de cierre. Sirve a los servicios que
+	// no registran identificadores en las rutas (p. ej. devolver la plantilla
+	// /clients/:clientId también cuando la petición se rechazó antes de resolver
+	// la ruta). Tiene prioridad sobre RedactPathParams.
+	RutaParaTelemetria func(c *fiber.Ctx) string
 }
 
 // Middleware instala observabilidad por request en una app Fiber:
@@ -69,8 +75,10 @@ func Middleware(cfg ...MiddlewareConfig) fiber.Handler {
 	// Config o entorno (ops puede encenderlo sin redeploy de código).
 	logSuccess := (len(cfg) > 0 && cfg[0].LogSuccess) || envBool("KEEPER_HTTP_LOG_SUCCESS")
 	var redactParams []string
+	var rutaParaTelemetria func(*fiber.Ctx) string
 	if len(cfg) > 0 {
 		redactParams = cfg[0].RedactPathParams
+		rutaParaTelemetria = cfg[0].RutaParaTelemetria
 	}
 	tracer := otel.Tracer(scopeName)
 	prop := otel.GetTextMapPropagator()
@@ -139,6 +147,9 @@ func Middleware(cfg ...MiddlewareConfig) fiber.Handler {
 		// La ruta ya está resuelta tras c.Next(), así que aquí sí se pueden ubicar
 		// los parámetros sensibles y sacar su valor del path que se exporta.
 		pathExportable := redactPathParams(c, safePath, redactParams)
+		if rutaParaTelemetria != nil {
+			pathExportable = keeper.SafeUTF8(rutaParaTelemetria(c))
+		}
 
 		span.SetAttributes(
 			attribute.String("http.request.method", c.Method()),
@@ -158,7 +169,10 @@ func Middleware(cfg ...MiddlewareConfig) fiber.Handler {
 		// nombre del span (semconv HTTP: "{método} {http.route}") — agrupa por
 		// operación sin explotar en cardinalidad por los ids de la URL.
 		rutaLegible := pathExportable
-		if route := c.Route().Path; route != "" && route != "/" {
+		if rutaParaTelemetria != nil {
+			span.SetAttributes(attribute.String("http.route", pathExportable))
+			span.SetName(c.Method() + " " + pathExportable)
+		} else if route := c.Route().Path; route != "" && route != "/" {
 			ruta := keeper.SafeUTF8(route)
 			span.SetAttributes(attribute.String("http.route", ruta))
 			span.SetName(c.Method() + " " + ruta)
@@ -187,7 +201,9 @@ func Middleware(cfg ...MiddlewareConfig) fiber.Handler {
 		// handler de logs los redacta). El span ya los lleva (arriba).
 		logAttrs := []slog.Attr{
 			slog.String("http.request.method", c.Method()),
-			slog.String("url.path", safePath),
+			// La misma ruta que el span: RedactPathParams prometía sacar el valor
+			// sensible también del log de cierre, y este usaba la ruta cruda.
+			slog.String("url.path", pathExportable),
 			slog.Int("http.response.status_code", status),
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 			slog.Float64("sample_rate", keeper.SampleRate()),

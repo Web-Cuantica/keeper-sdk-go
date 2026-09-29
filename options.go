@@ -25,6 +25,7 @@ type config struct {
 	contrato      *Contrato
 	logStdout     bool
 	sinExportar   bool
+	captura       *Captura
 }
 
 // Option configura el SDK. Las opciones tienen prioridad sobre las variables de entorno.

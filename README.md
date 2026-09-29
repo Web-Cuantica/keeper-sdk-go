@@ -106,9 +106,11 @@ keeper.Start(ctx,
 - **Origen del contrato:** lo normal es generarlo desde un registro de convenciones
   semánticas en YAML (formato de OpenTelemetry Weaver), no escribirlo a mano.
 
-**Prueba de contrato de un servicio:** arranca con `WithSinExportar()` y el contrato, corre
-los flujos y falla si `keeper.Violaciones()` no está vacío. Con `WithSinExportar` las
-trazas se procesan en síncrono, así que las violaciones se ven en cuanto el span termina.
+**Prueba de contrato de un servicio:** arranca con `WithCaptura(c)` y el contrato, corre los
+flujos con una persona sintética y falla si `keeper.Violaciones()` no está vacío o si
+`c.Buscar(curp)` encuentra el dato en algún span, evento o log. La captura guarda lo que saldría
+hacia Keeper, ya filtrado y censurado; implica `WithSinExportar`, así que las trazas se procesan
+en síncrono y nada sale del proceso.
 
 ## Salida a consola
 
@@ -141,6 +143,11 @@ con `trace_id` y `span_id` para ir de la consola a la traza.
 app := fiber.New()
 app.Use(keeperfiber.Middleware())
 ```
+
+Si el servicio no registra identificadores en las rutas, `RutaParaTelemetria` decide qué ruta
+ven `url.path`, `http.route`, el nombre del span y el log de cierre (por ejemplo, la plantilla
+`/clients/:clientId` también cuando la petición se rechazó antes de resolver la ruta).
+`RedactPathParams` saca el valor de parámetros sensibles del span **y** del log de cierre.
 
 > Nota: no se emite `process.*` como resource (ruido para logs de negocio); sí `service.*` y `host.name`.
 
