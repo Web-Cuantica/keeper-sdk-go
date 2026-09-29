@@ -148,6 +148,7 @@ Si el servicio no registra identificadores en las rutas, `RutaParaTelemetria` de
 ven `url.path`, `http.route`, el nombre del span y el log de cierre (por ejemplo, la plantilla
 `/clients/:clientId` también cuando la petición se rechazó antes de resolver la ruta).
 `RedactPathParams` saca el valor de parámetros sensibles del span **y** del log de cierre.
+El 404 queda en Debug (casi siempre son bots); `Log404` lo sube a Warn en un servicio interno.
 
 > Nota: no se emite `process.*` como resource (ruido para logs de negocio); sí `service.*` y `host.name`.
 

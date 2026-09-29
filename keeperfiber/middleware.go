@@ -58,6 +58,10 @@ type MiddlewareConfig struct {
 	// /clients/:clientId también cuando la petición se rechazó antes de resolver
 	// la ruta). Tiene prioridad sobre RedactPathParams.
 	RutaParaTelemetria func(c *fiber.Ctx) string
+	// Log404 sube el 404 a Warn. Por defecto queda en Debug porque en un servicio expuesto a
+	// internet casi siempre son bots probando rutas (/.env); en uno interno, al que solo llama
+	// otro sistema, un 404 es una anomalía real.
+	Log404 bool
 }
 
 // Middleware instala observabilidad por request en una app Fiber:
@@ -76,7 +80,9 @@ func Middleware(cfg ...MiddlewareConfig) fiber.Handler {
 	logSuccess := (len(cfg) > 0 && cfg[0].LogSuccess) || envBool("KEEPER_HTTP_LOG_SUCCESS")
 	var redactParams []string
 	var rutaParaTelemetria func(*fiber.Ctx) string
+	log404 := false
 	if len(cfg) > 0 {
+		log404 = cfg[0].Log404
 		redactParams = cfg[0].RedactPathParams
 		rutaParaTelemetria = cfg[0].RutaParaTelemetria
 	}
@@ -209,7 +215,7 @@ func Middleware(cfg ...MiddlewareConfig) fiber.Handler {
 			slog.Float64("sample_rate", keeper.SampleRate()),
 		}
 		logAttrs = append(logAttrs, eventAttrs...)
-		keeper.Logger().LogAttrs(ctx, levelFor(status, logSuccess), mensajeDeCierre(c.Method(), rutaLegible, status), logAttrs...)
+		keeper.Logger().LogAttrs(ctx, levelFor(status, logSuccess, log404), mensajeDeCierre(c.Method(), rutaLegible, status), logAttrs...)
 		return nextErr
 	}
 }
@@ -289,11 +295,11 @@ func shouldIgnorePath(path string, ignore []string) bool {
 //   - <400 (éxito) → Debug por default (el evento canónico del request es el span; así
 //     se evita duplicar señal). Con logSuccess=true sube a Info: la operación prefiere
 //     leer también el tráfico exitoso en la vista de Logs.
-func levelFor(status int, logSuccess bool) slog.Level {
+func levelFor(status int, logSuccess, log404 bool) slog.Level {
 	switch {
 	case status >= 500:
 		return slog.LevelError
-	case status == 404:
+	case status == 404 && !log404:
 		return slog.LevelDebug
 	case status >= 400:
 		return slog.LevelWarn

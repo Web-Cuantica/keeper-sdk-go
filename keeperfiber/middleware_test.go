@@ -134,28 +134,31 @@ func TestLevelFor(t *testing.T) {
 	casos := []struct {
 		status     int
 		logSuccess bool
+		log404     bool
 		want       slog.Level
 	}{
-		{200, false, slog.LevelDebug}, // éxito → debug por default (el span es el evento canónico)
-		{201, false, slog.LevelDebug},
-		{204, false, slog.LevelDebug},
-		{304, false, slog.LevelDebug},
-		{200, true, slog.LevelInfo}, // con logSuccess el éxito sube a Info (visible en prod)
-		{204, true, slog.LevelInfo},
-		{304, true, slog.LevelInfo},
-		{400, false, slog.LevelWarn}, // 4xx (salvo 404) → warn
-		{401, false, slog.LevelWarn},
-		{403, false, slog.LevelWarn},
-		{409, false, slog.LevelWarn},
-		{404, false, slog.LevelDebug}, // 404 → debug: cliente/escáneres de internet, no se exporta
-		{404, true, slog.LevelDebug},  // logSuccess NO rescata al 404 (sigue siendo ruido de bots)
-		{500, false, slog.LevelError}, // 5xx → error
-		{503, false, slog.LevelError},
-		{500, true, slog.LevelError},
+		{200, false, false, slog.LevelDebug}, // éxito → debug por default (el span es el evento canónico)
+		{201, false, false, slog.LevelDebug},
+		{204, false, false, slog.LevelDebug},
+		{304, false, false, slog.LevelDebug},
+		{200, true, false, slog.LevelInfo}, // con logSuccess el éxito sube a Info (visible en prod)
+		{204, true, false, slog.LevelInfo},
+		{304, true, false, slog.LevelInfo},
+		{400, false, false, slog.LevelWarn}, // 4xx (salvo 404) → warn
+		{401, false, false, slog.LevelWarn},
+		{403, false, false, slog.LevelWarn},
+		{409, false, false, slog.LevelWarn},
+		{404, false, false, slog.LevelDebug}, // 404 → debug: cliente/escáneres de internet, no se exporta
+		{404, true, false, slog.LevelDebug},  // logSuccess NO rescata al 404 (sigue siendo ruido de bots)
+		{500, false, false, slog.LevelError}, // 5xx → error
+		{503, false, false, slog.LevelError},
+		{500, true, false, slog.LevelError},
+		{404, false, true, slog.LevelWarn}, // servicio interno: el 404 es una anomalía real
+		{404, true, true, slog.LevelWarn},
 	}
 	for _, c := range casos {
-		if got := levelFor(c.status, c.logSuccess); got != c.want {
-			t.Errorf("levelFor(%d, %v) = %v, want %v", c.status, c.logSuccess, got, c.want)
+		if got := levelFor(c.status, c.logSuccess, c.log404); got != c.want {
+			t.Errorf("levelFor(%d, %v, %v) = %v, want %v", c.status, c.logSuccess, c.log404, got, c.want)
 		}
 	}
 }
