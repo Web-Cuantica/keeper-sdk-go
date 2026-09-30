@@ -41,6 +41,8 @@ Validado con `go test -cover ./...`:
 - [x] **GO-13** — `WithCaptura` para la prueba de contrato con datos (buscar una persona
   sintética en spans, eventos y logs) y `keeperfiber.RutaParaTelemetria`. Corregido:
   `RedactPathParams` no se aplicaba al log de cierre.
+- [x] **GO-14** — el atributo convencional de Go (`"error", err`) se convierte en `exception.*` y, en
+  nivel error, marca el span: un servicio existente queda con la semántica OTel sin reescribir sus logs.
 - [ ] **GO-10** — helpers GenAI semconv (`gen_ai.*`) si hay uso real de LLMs.
 
 ## Pendiente (roadmap)

@@ -174,6 +174,8 @@ func Start(ctx context.Context, opts ...Option) (func(context.Context) error, er
 	if contrato != nil {
 		h = contratoHandler{next: h, c: contrato}
 	}
+	// Antes del contrato: `error` se convierte en exception.* y nunca llega a contar como violación.
+	h = erroresHandler{next: h}
 	h = contextHandler{next: h}
 	h = &leveledHandler{next: h, level: cfg.level}
 

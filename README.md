@@ -124,6 +124,8 @@ con `trace_id` y `span_id` para ir de la consola a la traza.
 - `keeper.Violaciones()` / `keeper.ReiniciarViolaciones()` — atributos fuera del contrato vistos y su conteo.
 - `keeper.Logger() *slog.Logger` — logger estructurado; úsalo con el `ctx` del request para correlacionar.
 - `keeper.LogError(ctx, msg, err, attrs...)` — loguea error con `exception.*` y lo registra en el span.
+- `slog.Error("msg", "error", err)` — la forma convencional de Go también sirve: el SDK convierte
+  `error`/`err` en `exception.type` y `exception.message`, y en nivel error marca el span activo.
 - `keeper.HashID(value)` — hash one-way manual (requiere pepper); normalmente lo hace el redact automático.
 
 ## Middleware Fiber (`keeperfiber`)
