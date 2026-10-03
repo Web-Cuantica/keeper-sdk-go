@@ -176,7 +176,7 @@ func TestRutaParaTelemetria_MandaSobreSpanYLog(t *testing.T) {
 		t.Errorf("nombre del span: %q", s.Name())
 	}
 	for _, kv := range s.Attributes() {
-		if strings.Contains(kv.Value.Emit(), "zq7731x") {
+		if strings.Contains(kv.Value.String(), "zq7731x") {
 			t.Errorf("el id salió en el atributo %s del span", kv.Key)
 		}
 	}

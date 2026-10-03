@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 func TestEndpointParts(t *testing.T) {
@@ -63,10 +63,10 @@ func TestAttrToKeyValue(t *testing.T) {
 	if kv := attrToKeyValue(slog.String("s", "hola")); kv.Value.AsString() != "hola" {
 		t.Error("string")
 	}
-	if kv := attrToKeyValue(slog.Duration("d", 2*time.Second)); kv.Value.Kind() != otellog.KindString {
+	if kv := attrToKeyValue(slog.Duration("d", 2*time.Second)); kv.Value.Type() != attribute.STRING {
 		t.Error("duration debe serializarse a string")
 	}
-	if kv := attrToKeyValue(slog.Time("t", time.Now())); kv.Value.Kind() != otellog.KindString {
+	if kv := attrToKeyValue(slog.Time("t", time.Now())); kv.Value.Type() != attribute.STRING {
 		t.Error("time debe serializarse a string")
 	}
 	// string con UTF-8 inválido se sanea (no rompe el export OTLP).

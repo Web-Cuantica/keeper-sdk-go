@@ -70,7 +70,7 @@ func (c *Captura) Buscar(texto string) []string {
 	}
 	enAtributos := func(attrs []attribute.KeyValue, lugar string) {
 		for _, kv := range attrs {
-			en(kv.Value.Emit(), fmt.Sprintf("%s, atributo %s", lugar, kv.Key))
+			en(kv.Value.String(), fmt.Sprintf("%s, atributo %s", lugar, kv.Key))
 		}
 	}
 	for _, s := range c.Spans() {

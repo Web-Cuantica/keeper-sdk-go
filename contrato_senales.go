@@ -98,7 +98,7 @@ func (e exportadorConContrato) filtrarAtributos(in []attribute.KeyValue) ([]attr
 		admitida := e.c.admite(clave, senalTrazas)
 		reemplazo, esIdent := kv, e.c.esIdentificador(clave)
 		if esIdent {
-			reemplazo = attribute.String(clave, protegerIdentificador(kv.Value.Emit()))
+			reemplazo = attribute.String(clave, protegerIdentificador(kv.Value.String()))
 		}
 		if admitida && !esIdent {
 			if cambio {

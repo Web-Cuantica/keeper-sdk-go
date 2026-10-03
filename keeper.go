@@ -21,7 +21,6 @@ import (
 	otlplog "go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	otlpmetric "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	otlptrace "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
-	otellog "go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -159,7 +158,7 @@ func Start(ctx context.Context, opts ...Option) (func(context.Context) error, er
 		lpOpts = append(lpOpts, sdklog.WithProcessor(sdklog.NewBatchProcessor(logExp)))
 	}
 	lp := sdklog.NewLoggerProvider(lpOpts...)
-	otellog.SetLoggerProvider(lp)
+	otel.SetLoggerProvider(lp)
 
 	// slog -> OTel logs (handler propio: fija SeverityText), con request_id de
 	// contexto, contrato, redacción y nivel mínimo.

@@ -162,7 +162,7 @@ func exportarSpan(t *testing.T, c *contratoActivo, attrs []attribute.KeyValue, e
 func mapa(kvs []attribute.KeyValue) map[string]string {
 	out := map[string]string{}
 	for _, kv := range kvs {
-		out[string(kv.Key)] = kv.Value.Emit()
+		out[string(kv.Key)] = kv.Value.String()
 	}
 	return out
 }

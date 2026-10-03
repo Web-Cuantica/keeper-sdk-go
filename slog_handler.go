@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
 )
 
@@ -15,7 +16,7 @@ import (
 // correlación con la traza la añade el SDK de logs a partir del contexto.
 type otelHandler struct {
 	logger otellog.Logger
-	attrs  []otellog.KeyValue
+	attrs  []attribute.KeyValue
 }
 
 func newOtelHandler(logger otellog.Logger) *otelHandler {
@@ -32,7 +33,7 @@ func (h *otelHandler) Handle(ctx context.Context, r slog.Record) error {
 	} else {
 		rec.SetTimestamp(r.Time)
 	}
-	rec.SetBody(otellog.StringValue(SafeUTF8(r.Message)))
+	rec.SetBody(attribute.StringValue(SafeUTF8(r.Message)))
 	sev, text := mapSeverity(r.Level)
 	rec.SetSeverity(sev)
 	rec.SetSeverityText(text)
@@ -46,7 +47,7 @@ func (h *otelHandler) Handle(ctx context.Context, r slog.Record) error {
 }
 
 func (h *otelHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	na := make([]otellog.KeyValue, len(h.attrs), len(h.attrs)+len(attrs))
+	na := make([]attribute.KeyValue, len(h.attrs), len(h.attrs)+len(attrs))
 	copy(na, h.attrs)
 	for _, a := range attrs {
 		na = append(na, attrToKeyValue(a))
@@ -74,25 +75,25 @@ func mapSeverity(l slog.Level) (otellog.Severity, string) {
 	}
 }
 
-func attrToKeyValue(a slog.Attr) otellog.KeyValue {
+func attrToKeyValue(a slog.Attr) attribute.KeyValue {
 	switch a.Value.Kind() {
 	case slog.KindBool:
-		return otellog.Bool(a.Key, a.Value.Bool())
+		return attribute.Bool(a.Key, a.Value.Bool())
 	case slog.KindInt64:
-		return otellog.Int64(a.Key, a.Value.Int64())
+		return attribute.Int64(a.Key, a.Value.Int64())
 	case slog.KindUint64:
-		return otellog.Int64(a.Key, int64(a.Value.Uint64()))
+		return attribute.Int64(a.Key, int64(a.Value.Uint64()))
 	case slog.KindFloat64:
-		return otellog.Float64(a.Key, a.Value.Float64())
+		return attribute.Float64(a.Key, a.Value.Float64())
 	case slog.KindString:
 		// Sanitiza UTF-8: un valor con bytes inválidos (p. ej. User-Agent o ruta de
 		// un bot) haría que el exportador OTLP rechace el lote completo de logs.
-		return otellog.String(a.Key, SafeUTF8(a.Value.String()))
+		return attribute.String(a.Key, SafeUTF8(a.Value.String()))
 	case slog.KindDuration:
-		return otellog.String(a.Key, a.Value.Duration().String())
+		return attribute.String(a.Key, a.Value.Duration().String())
 	case slog.KindTime:
-		return otellog.String(a.Key, a.Value.Time().Format(time.RFC3339Nano))
+		return attribute.String(a.Key, a.Value.Time().Format(time.RFC3339Nano))
 	default:
-		return otellog.String(a.Key, SafeUTF8(a.Value.String()))
+		return attribute.String(a.Key, SafeUTF8(a.Value.String()))
 	}
 }
